@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <sys/select.h>
+#include <list>
 
 int socket_in;
 int socket_client;
@@ -18,8 +19,6 @@ struct packet {
   char raw[512];
   size_t raw_len;
 };
-
-bool g_is_stopped;
 
 enum mp_type {
   BP_MEMORY   = 0,
@@ -44,11 +43,16 @@ enum target_signal {
 };
 
 struct bp_insn {
+  uint32_t addr;
   uint32_t insn_orig;
   bool is_compressed;
-}
+};
 
-#define IS_COMPRESSED(instr) ((instr & 0x3) != 0x3)
+std::list<struct bp_insn> g_bp_list;
+
+#define INSN_IS_COMPRESSED(instr) ((instr & 0x3) != 0x3)
+#define INSN_BP_COMPRESSED   0x8002
+#define INSN_BP              0x00100073
 
 #define DEBUG_BASE_ADDR 0x1A110000
 
@@ -63,12 +67,13 @@ bool sim_mem_open();
 bool sim_mem_read(uint32_t addr, uint32_t *rdata);
 bool sim_mem_write(uint32_t addr, uint8_t be, uint32_t wdata);
 
+bool sim_mem_write_h(uint32_t addr, uint32_t wdata);
 bool sim_mem_write_w(uint32_t addr, uint32_t wdata);
 bool sim_mem_read_w(uint32_t addr, uint32_t* rdata);
 bool debug_write(uint32_t addr, uint32_t wdata);
 bool debug_read(uint32_t addr, uint32_t* rdata);
 bool debug_halt();
-bool debug_resume();
+bool debug_resume(bool step);
 bool debug_gpr_read(int i, uint32_t *data);
 bool debug_gpr_write(int i, uint32_t data);
 bool debug_csr_read(int i, uint32_t *data);
@@ -228,7 +233,7 @@ bool rsp_get_packet(struct packet* packet) {
   return true;
 }
 
-bool rsp_send(char* data, size_t len) {
+bool rsp_send(const char* data, size_t len) {
   int ret;
   size_t raw_len = len + 4;
   char* raw = (char*)malloc(raw_len);
@@ -274,14 +279,14 @@ bool rsp_send(char* data, size_t len) {
   return true;
 }
 
-bool rsp_send_str(char* data) {
+bool rsp_send_str(const char* data) {
   return rsp_send(data, strlen(data));
 }
 
 bool rsp_query(char* data, size_t len) {
   if (strncmp ("qSupported", data, strlen ("qSupported")) == 0)
   {
-    char* support_string = "PacketSize=256";
+    const char* support_string = "PacketSize=256";
 
     rsp_send(support_string, strlen(support_string));
     return true;
@@ -300,14 +305,14 @@ bool rsp_query(char* data, size_t len) {
   }
   else if (strncmp ("qfThreadInfo", data, strlen ("qfThreadInfo")) == 0)
   {
-    char* threadinfo_str = "m0";
+    const char* threadinfo_str = "m0";
 
     rsp_send(threadinfo_str, strlen(threadinfo_str));
     return true;
   }
   else if (strncmp ("qsThreadInfo", data, strlen ("qsThreadInfo")) == 0)
   {
-    char* sthreadinfo_str = "l";
+    const char* sthreadinfo_str = "l";
 
     rsp_send(sthreadinfo_str, strlen(sthreadinfo_str));
     return true;
@@ -329,7 +334,7 @@ bool rsp_query(char* data, size_t len) {
   }
   else if (strncmp ("qOffsets", data, strlen ("qOffsets")) == 0)
   {
-    char* offsets_str = "Text=0;Data=0;Bss=0";
+    const char* offsets_str = "Text=0;Data=0;Bss=0";
 
     rsp_send(offsets_str, strlen(offsets_str));
     return true;
@@ -408,6 +413,23 @@ bool rsp_reg_read(char* data, size_t len) {
   return rsp_send_str(data_str);
 }
 
+bool rsp_reg_write(char* data, size_t len) {
+  uint32_t addr;
+  uint32_t wdata;
+  char data_str[10];
+
+  sscanf(data, "%x=%08x", &addr, &wdata);
+
+  wdata = ntohl(wdata);
+
+  if (addr < 32)
+    debug_gpr_write(addr, wdata);
+  else
+    return rsp_send_str("E01");
+
+  return rsp_send_str("OK");
+}
+
 bool rsp_write_regs(char* data, size_t len) {
   printf("REG WRITE IS STILL TODO\n");
   return false;
@@ -432,13 +454,80 @@ bool rsp_mem_read(char* data, size_t len) {
 }
 
 bool rsp_mem_write_ascii(char* data, size_t len) {
-  printf("WRITE MEM IS STILL TODO\n");
-  return rsp_send_str("");
+  uint32_t addr;
+  size_t length;
+  uint32_t wdata;
+  int i, j;
+
+  if (sscanf(data, "%x,%d:", &addr, &length) != 2)
+    return false;
+
+  for(i = 0; i < len; i++) {
+    if (data[i] == ':') {
+      break;
+    }
+  }
+
+  if (i == len)
+    return false;
+
+  // align to hex data
+  data = &data[i+1];
+  len = len - i - 1;
+
+  for(j = 0; j < len/8; j++) {
+    wdata = 0;
+    for(i = 0; i < 8; i++) {
+      char c = data[j * 8 + i];
+      uint32_t hex = 0;
+      if (c >= '0' && c <= '9')
+        hex = c - '0';
+      else if (c >= 'a' && c <= 'f')
+        hex = c - 'a' + 10;
+      else if (c >= 'A' && c <= 'F')
+        hex = c - 'A' + 10;
+
+      wdata |= hex << (4 * i);
+    }
+
+    sim_mem_write_w(addr, wdata);
+    addr += 4;
+  }
+
+  return rsp_send_str("OK");
 }
 
 bool rsp_mem_write(char* data, size_t len) {
-  printf("WRITE MEM IS STILL TODO\n");
-  return rsp_send_str("");
+  uint32_t addr;
+  size_t length;
+  uint32_t wdata;
+  int i, j;
+
+  if (sscanf(data, "%x,%d:", &addr, &length) != 2)
+    return false;
+
+  for(i = 0; i < len; i++) {
+    if (data[i] == ':') {
+      break;
+    }
+  }
+
+  if (i == len)
+    return false;
+
+  // align to hex data
+  data = &data[i+1];
+  len = len - i - 1;
+
+  for(j = 0; j < len/4; j++) {
+    wdata = *(int*)&data[j * 4];
+
+    printf ("Addr %X, wdata %X\n", addr, wdata);
+    sim_mem_write_w(addr, wdata);
+    addr += 4;
+  }
+
+  return rsp_send_str("OK");
 }
 
 bool rsp_v(char* data, size_t len) {
@@ -513,7 +602,24 @@ bool rsp_continue(char* data, size_t len) {
   // if (npc != addr)
   //   debug_write(DBG_NPC_REG, addr);
 
-  return debug_resume();
+  return debug_resume(false);
+}
+
+bool rsp_step(char* data, size_t len) {
+  uint32_t addr;
+  uint32_t npc;
+
+  // if (data[0] == 'C') {
+  //   // strip signal first
+  // }
+  // sscanf(data, "%x", &addr);
+
+  // debug_read(DBG_NPC_REG, &npc);
+
+  // if (npc != addr)
+  //   debug_write(DBG_NPC_REG, addr);
+
+  return debug_resume(true);
 }
 
 bool rsp_notify_signal() {
@@ -567,20 +673,62 @@ bool rsp_notify(char* data, size_t len) {
 bool rsp_bp_insert(char* data, size_t len) {
   enum mp_type type;
   uint32_t addr;
-  int len;
+  int bp_len;
 
-  if (3 != sscanf(data, "%1d,%x,%1d", (int *)&type, &addr, &len))
-    return false
-
-  if (type != BP_MEMORY)
+  if (3 != sscanf(data, "Z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
+    fprintf(stderr, "Could not get three arguments\n");
     return false;
+  }
+
+  if (type != BP_MEMORY) {
+    fprintf(stderr, "Not a memory bp\n");
+    return false;
+  }
 
   struct bp_insn bp;
 
+  bp.addr = addr;
   sim_mem_read_w(addr, &bp.insn_orig);
-  bp.is_compressed = IS_COMPRESSED(bp.insn_orig);
+  bp.is_compressed = INSN_IS_COMPRESSED(bp.insn_orig);
 
-  return true;
+  g_bp_list.push_back(bp);
+
+  if (bp.is_compressed)
+    sim_mem_write_h(addr, INSN_BP_COMPRESSED);
+  else
+    sim_mem_write_w(addr, INSN_BP);
+
+  return rsp_send_str("OK");
+}
+
+bool rsp_bp_remove(char* data, size_t len) {
+  enum mp_type type;
+  uint32_t addr;
+  int bp_len;
+
+  if (3 != sscanf(data, "z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
+    fprintf(stderr, "Could not get three arguments\n");
+    return false;
+  }
+
+  if (type != BP_MEMORY) {
+    fprintf(stderr, "Not a memory bp\n");
+    return false;
+  }
+
+  for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
+    if (it->addr == addr) {
+      if (it->is_compressed)
+        sim_mem_write_h(it->addr, it->insn_orig);
+      else
+        sim_mem_write_w(it->addr, it->insn_orig);
+
+      g_bp_list.erase(it);
+      break;
+    }
+  }
+
+  return rsp_send_str("OK");
 }
 
 bool rsp_loop() {
@@ -612,6 +760,10 @@ bool rsp_loop() {
         rsp_reg_read(&packet.raw[2], packet.raw_len-4);
         break;
 
+      case 'P':
+        rsp_reg_write(&packet.raw[2], packet.raw_len-4);
+        break;
+
       case 'G':
         rsp_write_regs(&packet.raw[2], packet.raw_len-4);
         break;
@@ -619,6 +771,11 @@ bool rsp_loop() {
       case 'c':
       case 'C':
         rsp_continue(&packet.raw[1], packet.raw_len-4);
+        break;
+
+      case 's':
+      case 'S':
+        rsp_step(&packet.raw[1], packet.raw_len-4);
         break;
 
       case 'H':
@@ -638,10 +795,15 @@ bool rsp_loop() {
         break;
 
       case 'M':
-        rsp_mem_write_ascii(&packet.raw[1], packet.raw_len-4);
+        rsp_mem_write_ascii(&packet.raw[2], packet.raw_len-5);
+        break;
 
       case 'X':
-        rsp_mem_write(&packet.raw[1], packet.raw_len-4);
+        rsp_mem_write(&packet.raw[2], packet.raw_len-5);
+        break;
+
+      case 'z':
+        rsp_bp_remove(&packet.raw[1], packet.raw_len-4);
         break;
 
       case 'Z':
@@ -691,8 +853,6 @@ bool sim_mem_open() {
   }
 
   printf("Mem connected!");
-
-  g_is_stopped = false;
 
   return true;
 }
@@ -765,6 +925,13 @@ bool sim_mem_write_w(uint32_t addr, uint32_t wdata) {
   return sim_mem_write(addr, 0xF, wdata);
 }
 
+bool sim_mem_write_h(uint32_t addr, uint32_t wdata) {
+  if (addr & 0x2)
+    return sim_mem_write(addr, 0xC, wdata << 16);
+  else
+    return sim_mem_write(addr, 0x3, wdata & 0xFFFF);
+}
+
 bool sim_mem_read_w(uint32_t addr, uint32_t* rdata) {
   return sim_mem_read(addr, rdata);
 }
@@ -786,13 +953,45 @@ bool debug_halt() {
   return debug_write(DBG_CTRL_REG, data);
 }
 
-bool debug_resume() {
+bool debug_resume(bool step) {
   int ret;
   char pkt;
+  uint32_t hit;
+  uint32_t ppc;
 
-  g_is_stopped = false;
 
-  debug_write(DBG_CTRL_REG, 0);
+  // now let's handle software breakpoints
+  // did we stop because of an ebreak?
+  //  If yes, let's check if we inserted it (is in g_bp_list)
+  debug_read(DBG_PPC_REG, &ppc);
+  debug_read(DBG_HIT_REG, &hit);
+  if (hit & 0x1) {
+    for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
+      if (it->addr == ppc) {
+        // we found our bp
+        // This means we now have to replace it with its old value and
+        // single-step once, then replace it with a bp again
+        if (it->is_compressed)
+          sim_mem_write_h(it->addr, it->insn_orig);
+        else
+          sim_mem_write_w(it->addr, it->insn_orig);
+
+        debug_write(DBG_CTRL_REG, 0x1);
+        if (it->is_compressed)
+          sim_mem_write_h(it->addr, INSN_BP_COMPRESSED);
+        else
+          sim_mem_write_w(it->addr, INSN_BP);
+      }
+    }
+  }
+
+  // clear hit register, has to be done before CTRL
+  debug_write(DBG_HIT_REG, 0);
+
+  if (step)
+    debug_write(DBG_CTRL_REG, 0x1);
+  else
+    debug_write(DBG_CTRL_REG, 0);
 
   fd_set rfds;
   struct timeval tv;
@@ -807,7 +1006,6 @@ bool debug_resume() {
 
     if (select(socket_client+1, &rfds, NULL, NULL, &tv) == 0) {
       if (debug_is_stopped()) {
-        g_is_stopped = true;
         return rsp_signal();
       }
     } else {

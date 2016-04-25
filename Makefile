@@ -1,7 +1,7 @@
-CC=gcc
+CXX=g++
 
 
 all: debug_bridge
 
-debug_bridge: main.c
-	$(CC) -std=c99 -o $@ $^
+debug_bridge: main.cpp
+	$(CXX) -o $@ $^
