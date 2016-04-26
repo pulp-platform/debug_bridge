@@ -1,6 +1,6 @@
 
 
-SRCS = main.cpp
+SRCS = main.cpp debug_if.cpp
 
 ifdef fpga
 	CXX=arm-xilinx-linux-gnueabi-g++

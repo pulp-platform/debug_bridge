@@ -12,6 +12,7 @@
 #include <list>
 
 #include "mem.h"
+#include "debug_if.h"
 
 int socket_in;
 int socket_client;
@@ -55,26 +56,9 @@ std::list<struct bp_insn> g_bp_list;
 #define INSN_BP_COMPRESSED   0x8002
 #define INSN_BP              0x00100073
 
-#define DEBUG_BASE_ADDR 0x1A110000
-
-#define DBG_CTRL_REG  0x0
-#define DBG_HIT_REG   0x4
-#define DBG_IE_REG    0x8
-#define DBG_CAUSE_REG 0xC
-#define DBG_NPC_REG   0x1200
-#define DBG_PPC_REG   0x1204
-
-bool debug_write(uint32_t addr, uint32_t wdata);
-bool debug_read(uint32_t addr, uint32_t* rdata);
-bool debug_halt();
-bool debug_resume(bool step);
-bool debug_gpr_read(int i, uint32_t *data);
-bool debug_gpr_write(int i, uint32_t data);
-bool debug_csr_read(int i, uint32_t *data);
-bool debug_csr_write(int i, uint32_t data);
-bool debug_is_stopped();
 
 bool rsp_notify(char* data, size_t len);
+bool rsp_signal();
 
 
 bool rsp_open(int socket_port) {
@@ -572,6 +556,70 @@ int gdb_signal(char* str, size_t len) {
   return snprintf(str, 4, "S%02x", signal);
 }
 
+bool rsp_resume(bool step) {
+  int ret;
+  char pkt;
+  uint32_t hit;
+  uint32_t ppc;
+
+
+  // now let's handle software breakpoints
+  // did we stop because of an ebreak?
+  //  If yes, let's check if we inserted it (is in g_bp_list)
+  debug_read(DBG_PPC_REG, &ppc);
+  debug_read(DBG_HIT_REG, &hit);
+  if (hit & 0x1) {
+    for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
+      if (it->addr == ppc) {
+        // we found our bp
+        // This means we now have to replace it with its old value and
+        // single-step once, then replace it with a bp again
+        if (it->is_compressed)
+          sim_mem_write_h(it->addr, it->insn_orig);
+        else
+          sim_mem_write_w(it->addr, it->insn_orig);
+
+        debug_write(DBG_CTRL_REG, 0x1);
+        if (it->is_compressed)
+          sim_mem_write_h(it->addr, INSN_BP_COMPRESSED);
+        else
+          sim_mem_write_w(it->addr, INSN_BP);
+      }
+    }
+  }
+
+  // clear hit register, has to be done before CTRL
+  debug_write(DBG_HIT_REG, 0);
+
+  if (step)
+    debug_write(DBG_CTRL_REG, 0x1);
+  else
+    debug_write(DBG_CTRL_REG, 0);
+
+  fd_set rfds;
+  struct timeval tv;
+
+
+  while(1) {
+    FD_ZERO(&rfds);
+    FD_SET(socket_client, &rfds);
+
+    tv.tv_sec = 0;
+    tv.tv_usec = 100 * 1000;
+
+    if (select(socket_client+1, &rfds, NULL, NULL, &tv) == 0) {
+      if (debug_is_stopped()) {
+        return rsp_signal();
+      }
+    } else {
+      ret = recv(socket_client, &pkt, 1, 0);
+      if (ret == 1 && pkt == 0x3) {
+        debug_halt();
+      }
+    }
+  }
+}
+
 bool rsp_signal() {
   char str[4];
   size_t len;
@@ -596,7 +644,7 @@ bool rsp_continue(char* data, size_t len) {
   // if (npc != addr)
   //   debug_write(DBG_NPC_REG, addr);
 
-  return debug_resume(false);
+  return rsp_resume(false);
 }
 
 bool rsp_step(char* data, size_t len) {
@@ -613,7 +661,7 @@ bool rsp_step(char* data, size_t len) {
   // if (npc != addr)
   //   debug_write(DBG_NPC_REG, addr);
 
-  return debug_resume(true);
+  return rsp_resume(true);
 }
 
 bool rsp_notify_signal() {
@@ -814,115 +862,6 @@ bool rsp_loop() {
   }
 
   return true;
-}
-
-
-bool debug_write(uint32_t addr, uint32_t wdata) {
-  return sim_mem_write_w(DEBUG_BASE_ADDR + addr, wdata);
-}
-
-bool debug_read(uint32_t addr, uint32_t* rdata) {
-  return sim_mem_read_w(DEBUG_BASE_ADDR + addr, rdata);
-}
-
-bool debug_halt() {
-  uint32_t data;
-  if (!debug_read(DBG_CTRL_REG, &data))
-    return false;
-
-  data |= 0x1 << 16;
-  return debug_write(DBG_CTRL_REG, data);
-}
-
-bool debug_resume(bool step) {
-  int ret;
-  char pkt;
-  uint32_t hit;
-  uint32_t ppc;
-
-
-  // now let's handle software breakpoints
-  // did we stop because of an ebreak?
-  //  If yes, let's check if we inserted it (is in g_bp_list)
-  debug_read(DBG_PPC_REG, &ppc);
-  debug_read(DBG_HIT_REG, &hit);
-  if (hit & 0x1) {
-    for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
-      if (it->addr == ppc) {
-        // we found our bp
-        // This means we now have to replace it with its old value and
-        // single-step once, then replace it with a bp again
-        if (it->is_compressed)
-          sim_mem_write_h(it->addr, it->insn_orig);
-        else
-          sim_mem_write_w(it->addr, it->insn_orig);
-
-        debug_write(DBG_CTRL_REG, 0x1);
-        if (it->is_compressed)
-          sim_mem_write_h(it->addr, INSN_BP_COMPRESSED);
-        else
-          sim_mem_write_w(it->addr, INSN_BP);
-      }
-    }
-  }
-
-  // clear hit register, has to be done before CTRL
-  debug_write(DBG_HIT_REG, 0);
-
-  if (step)
-    debug_write(DBG_CTRL_REG, 0x1);
-  else
-    debug_write(DBG_CTRL_REG, 0);
-
-  fd_set rfds;
-  struct timeval tv;
-
-
-  while(1) {
-    FD_ZERO(&rfds);
-    FD_SET(socket_client, &rfds);
-
-    tv.tv_sec = 0;
-    tv.tv_usec = 100 * 1000;
-
-    if (select(socket_client+1, &rfds, NULL, NULL, &tv) == 0) {
-      if (debug_is_stopped()) {
-        return rsp_signal();
-      }
-    } else {
-      ret = recv(socket_client, &pkt, 1, 0);
-      if (ret == 1 && pkt == 0x3) {
-        debug_halt();
-      }
-    }
-  }
-}
-
-bool debug_is_stopped() {
-  uint32_t data;
-  if (!debug_read(DBG_CTRL_REG, &data))
-    return false;
-
-  if (data & 0x10000)
-    return true;
-  else
-    return false;
-}
-
-bool debug_gpr_read(int i, uint32_t *data) {
-  return debug_read(0x1000 + i * 4, data);
-}
-
-bool debug_gpr_write(int i, uint32_t data) {
-  return debug_write(0x1000 + i * 4, data);
-}
-
-bool debug_csr_read(int i, uint32_t *data) {
-  return debug_read(0x4000 + i * 4, data);
-}
-
-bool debug_csr_write(int i, uint32_t data) {
-  return debug_write(0x4000 + i * 4, data);
 }
 
 int main() {
