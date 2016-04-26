@@ -47,82 +47,83 @@ bool sim_mem_open() {
   return true;
 }
 
-bool sim_mem_write(uint32_t addr, uint8_t be, uint32_t wdata) {
+bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
   int ret;
-  char data[9];
+  char data[2048];
+  // packet header looks like this:
+  // Write (in LSB)
+  // ADDR[31:0]
+  // SIZE[31:0]
+  //
+  // after that follows the data in the buffer (for a write), starting at the lowest byte
+  // for a read, the packet is finished with SIZE
 
-  data[0] = (1 << 7) | (be & 0xF);
-  *((int*)&data[1]) = htonl(addr);
-  *((int*)&data[5]) = htonl(wdata);
+  memset(data, 0, sizeof(data));
+
+  data[0] = write ? 1 : 0;
+  *((int*)&data[1]) = addr;
+  *((int*)&data[5]) = size;
 
   ret = send(mem_socket, data, 9, 0);
   if (ret != 9) {
-    fprintf(stderr, "Unable to send to simulator: %s\n", strerror(errno));
+    fprintf(stderr, "Unable to send header to simulator: %s\n", strerror(errno));
     return false;
   }
 
-  // now wait for response
-  ret = recv(mem_socket, data, 4, 0);
-  if (ret != 4) {
-    fprintf(stderr, "Unable to ack for write to simulator: %s\n", strerror(errno));
-    return false;
+  if (write) {
+    // write
+    ret = send(mem_socket, buffer, size, 0);
+    if (ret != size) {
+      fprintf(stderr, "Unable to send buffer to simulator: %s\n", strerror(errno));
+      return false;
+    }
+
+    // check response
+    ret = recv(mem_socket, data, 5, 0);
+    if (ret == -1 || ret == 0) {
+      fprintf(stderr, "Unable to get a response from simulator: %s\n", strerror(errno));
+      return false;
+    }
+
+    if (ret != 5) {
+      fprintf(stderr, "Unable to get all write response, only get %d from %d\n", ret, 5);
+      return false;
+    }
+
+    uint8_t ok    = *((uint8_t*)&data[0]);
+    uint32_t size = *((uint32_t*)&data[1]);
+
+    if (ok == -1) {
+      fprintf(stderr, "Write failed on simulator\n");
+      return false;
+    }
+  } else {
+    // read
+    ret = recv(mem_socket, data, 5, 0);
+    if (ret == -1 || ret == 0) {
+      fprintf(stderr, "Unable to get a response from simulator: %s\n", strerror(errno));
+      return false;
+    }
+
+    uint8_t ok    = *((uint8_t*)&data[0]);
+    uint32_t size = *((uint32_t*)&data[1]);
+
+    if (ok == -1) {
+      fprintf(stderr, "Read failed on simulator\n");
+      return false;
+    }
+
+    ret = recv(mem_socket, buffer, size, 0);
+    if (ret == -1 || ret == 0) {
+      fprintf(stderr, "Unable to get a response from simulator: %s\n", strerror(errno));
+      return false;
+    }
+
+    if (ret != size) {
+      fprintf(stderr, "Unable to get all data only get %d from %d\n", ret, size);
+      return false;
+    }
   }
 
   return true;
 }
-
-bool sim_mem_read(uint32_t addr, uint32_t *rdata) {
-  int ret;
-  char data[9];
-  uint32_t rdata_int;
-
-  data[0] = 0xF;
-  *((int*)&data[1]) = htonl(addr);
-  *((int*)&data[5]) = 0;
-
-  ret = send(mem_socket, data, 9, 0);
-  // check for connection abort
-  if((ret == -1) || (ret == 0)) {
-    fprintf(stderr, "Mem: no data received: %s\n", strerror(errno));
-    // try to reopen connection
-    return sim_mem_open() && sim_mem_read(addr, rdata);
-  }
-
-  if (ret != 9) {
-    fprintf(stderr, "Unable to send to simulator: %s\n", strerror(errno));
-    return false;
-  }
-
-  // now wait for response
-  ret = recv(mem_socket, &rdata_int, 4, 0);
-  // check for connection abort
-  if((ret == -1) || (ret == 0)) {
-    fprintf(stderr, "Mem: no data received: %s\n", strerror(errno));
-    // try to reopen connection
-    return sim_mem_open() && sim_mem_read(addr, rdata);
-  }
-
-  if (ret != 4) {
-    fprintf(stderr, "Unable to get ack for read to simulator: %s\n", strerror(errno));
-    return false;
-  }
-  *rdata = ntohl(rdata_int);
-
-  return true;
-}
-
-bool sim_mem_write_w(uint32_t addr, uint32_t wdata) {
-  return sim_mem_write(addr, 0xF, wdata);
-}
-
-bool sim_mem_write_h(uint32_t addr, uint32_t wdata) {
-  if (addr & 0x2)
-    return sim_mem_write(addr, 0xC, wdata << 16);
-  else
-    return sim_mem_write(addr, 0x3, wdata & 0xFFFF);
-}
-
-bool sim_mem_read_w(uint32_t addr, uint32_t* rdata) {
-  return sim_mem_read(addr, rdata);
-}
-

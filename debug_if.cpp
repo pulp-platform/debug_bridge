@@ -3,11 +3,11 @@
 #include "mem.h"
 
 bool debug_write(uint32_t addr, uint32_t wdata) {
-  return sim_mem_write_w(DEBUG_BASE_ADDR + addr, wdata);
+  return sim_mem_access(1, DEBUG_BASE_ADDR + addr, 4, (char*)&wdata);
 }
 
 bool debug_read(uint32_t addr, uint32_t* rdata) {
-  return sim_mem_read_w(DEBUG_BASE_ADDR + addr, rdata);
+  return sim_mem_access(0, DEBUG_BASE_ADDR + addr, 4, (char*)rdata);
 }
 
 bool debug_halt() {
