@@ -86,6 +86,10 @@ bool rsp_open(int socket_port) {
 
   fprintf(stderr, "Listening on port %d\n", socket_port);
 
+  // now clear resources
+  bp_clear();
+  debug_halt();
+
   return true;
 }
 
@@ -805,9 +809,10 @@ bool rsp_bp_remove(char* data, size_t len) {
     return false;
   }
 
+  bp_remove(addr);
+
   // check if we are currently on this bp that is removed
   debug_read(DBG_PPC_REG, &ppc);
-  bp_disable(addr);
 
   if (addr == ppc) {
     debug_write(DBG_NPC_REG, ppc); // re-execute this instruction
@@ -902,7 +907,6 @@ bool rsp_loop() {
 
 int main() {
   sim_mem_open(4567);
-  debug_halt();
 
   while (1) {
     rsp_open(1234);
