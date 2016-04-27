@@ -17,9 +17,11 @@ int mem_socket;
 int mem_socket_port = 4567;
 const char* mem_server = "localhost";
 
-bool sim_mem_open() {
+bool sim_mem_open(int port) {
   struct sockaddr_in addr;
   struct hostent *he;
+
+  mem_socket_port = port;
 
   if((mem_socket = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
     fprintf(stderr, "Unable to create socket (%s)\n", strerror(errno));
@@ -47,9 +49,9 @@ bool sim_mem_open() {
   return true;
 }
 
-bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
+bool sim_mem_access_raw(bool write, unsigned int addr, int size, char* buffer) {
   int ret;
-  char data[2048];
+  char data[1024];
   // packet header looks like this:
   // Write (in LSB)
   // ADDR[31:0]
@@ -126,4 +128,19 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
   }
 
   return true;
+}
+
+bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
+  bool retval = true;
+
+  // break into 1024 byte chunks
+  while (size > 0) {
+    retval = retval && sim_mem_access_raw(write, addr, size, buffer);
+
+    addr   += 1024;
+    size   -= 1024;
+    buffer += 1024;
+  }
+
+  return retval;
 }

@@ -1,6 +1,6 @@
 
 
-SRCS = main.cpp debug_if.cpp
+SRCS = main.cpp debug_if.cpp breakpoints.cpp
 
 ifdef fpga
 	CXX=arm-xilinx-linux-gnueabi-g++
@@ -20,7 +20,7 @@ clean:
 debug_bridge: $(SRCS)
 	$(CXX) -o $@ $^
 
-ifdef '$(fpga)'
+ifdef fpga
 push: debug_bridge
 	scp ./debug_bridge $(FPGA_HOSTNAME):/root/
 endif

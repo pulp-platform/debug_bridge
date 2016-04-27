@@ -21,8 +21,7 @@
 
 int g_spi_fd;
 
-
-bool sim_mem_open() {
+bool sim_mem_open(int port) {
   bool retval = true;
   // open spidev
   g_spi_fd = open(SPIDEV, O_RDWR);
@@ -51,12 +50,12 @@ bool sim_mem_write(uint32_t addr, uint8_t be, uint32_t wdata) {
   // address
   wr_buf[1] = addr >> 24;
   wr_buf[2] = addr >> 16;
-  wr_buf[3] = addr >> 8;
-  wr_buf[4] = addr;
+  wr_buf[3] = addr >>  8;
+  wr_buf[4] = addr >>  0;
   wr_buf[5] = wdata >> 24;
   wr_buf[6] = wdata >> 16;
-  wr_buf[7] = wdata >> 8;
-  wr_buf[8] = wdata;
+  wr_buf[7] = wdata >>  8;
+  wr_buf[8] = wdata >>  0;
 
   // write to spidev
   if (write(g_spi_fd, wr_buf, 9) != 9) {
@@ -107,19 +106,109 @@ bool sim_mem_read(uint32_t addr, uint32_t *rdata) {
   return true;
 }
 
-bool sim_mem_write_w(uint32_t addr, uint32_t wdata) {
-  return sim_mem_write(addr, 0xF, wdata);
+bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
+  bool retval = true;
+  uint32_t rdata;
+  uint8_t be;
+
+  if (write) {
+    // write
+    // first align address, if needed
+
+    // bytes
+    if (addr & 0x1) {
+      be = 1 << (addr & 0x3);
+      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      addr   += 1;
+      size   -= 1;
+      buffer += 1;
+    }
+
+    // half-words
+    if (addr & 0x2) {
+      be = 0x3 << (addr & 0x3);
+      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      addr   += 2;
+      size   -= 2;
+      buffer += 2;
+    }
+
+    while (size >= 4) {
+      retval = retval && sim_mem_write(addr, 0xF, *((uint32_t*)buffer));
+      addr   += 4;
+      size   -= 4;
+      buffer += 4;
+    }
+
+    // half-words
+    if (addr & 0x2) {
+      be = 0x3 << (addr & 0x3);
+      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      addr   += 2;
+      size   -= 2;
+      buffer += 2;
+    }
+
+    // bytes
+    if (addr & 0x1) {
+      be = 1 << (addr & 0x3);
+      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      addr   += 1;
+      size   -= 1;
+      buffer += 1;
+    }
+  } else {
+    // read
+
+    // bytes
+    if (addr & 0x1) {
+      retval = retval && sim_mem_read(addr, &rdata);
+      buffer[0] = rdata;
+      addr   += 1;
+      size   -= 1;
+      buffer += 1;
+    }
+
+    // half-words
+    if (addr & 0x2) {
+      retval = retval && sim_mem_read(addr, &rdata);
+      buffer[0] = rdata;
+      buffer[1] = rdata >> 8;
+      addr   += 2;
+      size   -= 2;
+      buffer += 2;
+    }
+
+    while (size >= 4) {
+      retval = retval && sim_mem_read(addr, &rdata);
+      buffer[0] = rdata;
+      buffer[1] = rdata >> 8;
+      buffer[2] = rdata >> 16;
+      buffer[3] = rdata >> 24;
+      addr   += 4;
+      size   -= 4;
+      buffer += 4;
+    }
+
+    // half-words
+    if (addr & 0x2) {
+      retval = retval && sim_mem_read(addr, &rdata);
+      buffer[0] = rdata;
+      buffer[1] = rdata >> 8;
+      addr   += 2;
+      size   -= 2;
+      buffer += 2;
+    }
+
+    // bytes
+    if (addr & 0x1) {
+      retval = retval && sim_mem_read(addr, &rdata);
+      buffer[0] = rdata;
+      addr   += 1;
+      size   -= 1;
+      buffer += 1;
+    }
+  }
+
+  return true;
 }
-
-bool sim_mem_write_h(uint32_t addr, uint32_t wdata) {
-  if (addr & 0x2)
-    return sim_mem_write(addr, 0xC, wdata << 16);
-  else
-    return sim_mem_write(addr, 0x3, wdata & 0xFFFF);
-}
-
-bool sim_mem_read_w(uint32_t addr, uint32_t* rdata) {
-  return sim_mem_read(addr, rdata);
-}
-
-

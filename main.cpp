@@ -13,12 +13,15 @@
 
 #include "mem.h"
 #include "debug_if.h"
+#include "breakpoints.h"
 
 int socket_in;
 int socket_client;
 
+#define PACKET_MAX_LEN 4096
+
 struct packet {
-  char raw[512];
+  char raw[PACKET_MAX_LEN];
   size_t raw_len;
 };
 
@@ -43,18 +46,6 @@ enum target_signal {
   TARGET_SIGNAL_USR2 = 31,
   TARGET_SIGNAL_PWR  = 32
 };
-
-struct bp_insn {
-  uint32_t addr;
-  uint32_t insn_orig;
-  bool is_compressed;
-};
-
-std::list<struct bp_insn> g_bp_list;
-
-#define INSN_IS_COMPRESSED(instr) ((instr & 0x3) != 0x3)
-#define INSN_BP_COMPRESSED   0x8002
-#define INSN_BP              0x00100073
 
 
 bool rsp_notify(char* data, size_t len);
@@ -93,10 +84,6 @@ bool rsp_open(int socket_port) {
     return false;
   }
 
-  //ret = fcntl(socket_in, F_GETFL);
-  //ret |= O_NONBLOCK;
-  //fcntl(socket_in, F_SETFL, ret);
-
   fprintf(stderr, "Listening on port %d\n", socket_port);
 
   return true;
@@ -116,68 +103,94 @@ bool rsp_wait_client() {
     return false;
   }
 
-
-  // Set the comm socket to non-blocking.
-  //ret = fcntl(socket_client, F_GETFL);
-  //ret |= O_NONBLOCK;
-  //fcntl(socket_client, F_SETFL, ret);
-
   printf("RSP: Client connected!\n");
   return true;
 }
 
 bool rsp_get_packet(struct packet* packet) {
+  char c;
+  char check_chars[2];
+  char buffer[PACKET_MAX_LEN];
+  int  buffer_len = 0;
+  bool escaped = false;
   int ret;
   // packets follow the format: $packet-data#checksum
   // checksum is two-digit
 
   // poison packet
-  memset(packet->raw, 0, 512);
+  memset(packet->raw, 0, PACKET_MAX_LEN);
   packet->raw_len = 0;
 
   // first look for start bit
   do {
-    ret = recv(socket_client, &packet->raw[0], 1, 0);
+    ret = recv(socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
       fprintf(stderr, "RSP: Error receiving\n");
       return false;
     }
 
+    if(ret == -1 && errno == EWOULDBLOCK) {
+      // no data available
+      continue;
+    }
+
     // special case for 0x03 (asynchronous break)
-    if (packet->raw[0] == 0x03) {
+    if (c == 0x03) {
+      packet->raw[0]  = c;
       packet->raw_len = 1;
       return true;
     }
+  } while(c != '$');
 
-    printf ("recv: %x\n", packet->raw[0] & 0xFF);
-  } while(packet->raw[0] != '$');
-
-  packet->raw_len = 1;
+  buffer[0] = c;
 
   // now store data as long as we don't see #
   do {
-    if (packet->raw_len >= 512) {
+    if (buffer_len >= PACKET_MAX_LEN) {
       fprintf(stderr, "RSP: Too many characters received\n");
       return false;
     }
 
-    ret = recv(socket_client, &packet->raw[packet->raw_len++], 1, 0);
+    ret = recv(socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
       fprintf(stderr, "RSP: Error receiving\n");
       return false;
     }
-  } while(packet->raw[packet->raw_len-1] != '#');
+
+    if(ret == -1 && errno == EWOULDBLOCK) {
+      // no data available
+      continue;
+    }
+
+    buffer[buffer_len++] = c;
+
+    // check for 0x7d = '}'
+    if (c == 0x7d) {
+      escaped = true;
+      continue;
+    }
+
+    if (escaped)
+      packet->raw[packet->raw_len++] = c ^ 0x20;
+    else
+      packet->raw[packet->raw_len++] = c;
+
+    escaped = false;
+  } while(c != '#');
+
+  buffer_len--;
+  packet->raw_len--;
 
   // checksum, 2 bytes
-  ret = recv(socket_client, &packet->raw[packet->raw_len++], 1, 0);
+  ret = recv(socket_client, &check_chars[0], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
     fprintf(stderr, "RSP: Error receiving\n");
     return false;
   }
 
-  ret = recv(socket_client, &packet->raw[packet->raw_len++], 1, 0);
+  ret = recv(socket_client, &check_chars[1], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
     fprintf(stderr, "RSP: Error receiving\n");
     return false;
@@ -185,15 +198,15 @@ bool rsp_get_packet(struct packet* packet) {
 
   // check the checksum
   unsigned int checksum = 0;
-  for(int i = 1; i < packet->raw_len-3; i++) {
-    checksum += packet->raw[i];
+  for(int i = 0; i < buffer_len; i++) {
+    checksum += buffer[i];
   }
 
   checksum = checksum % 256;
   char checksum_str[3];
   snprintf(checksum_str, 3, "%02x", checksum);
 
-  if (packet->raw[packet->raw_len-2] != checksum_str[0] || packet->raw[packet->raw_len-1] != checksum_str[1]) {
+  if (check_chars[0] != checksum_str[0] || check_chars[1] != checksum_str[1]) {
     fprintf(stderr, "RSP: Checksum failed; received %.*s; checksum should be %02x\n", packet->raw_len, packet->raw, checksum);
     return false;
   }
@@ -206,7 +219,7 @@ bool rsp_get_packet(struct packet* packet) {
   }
 
   // NULL terminate the string
-  packet->raw[packet->raw_len-3] = '\0';
+  packet->raw[packet->raw_len] = '\0';
 
   return true;
 }
@@ -250,6 +263,11 @@ bool rsp_send(const char* data, size_t len) {
       free(raw);
       fprintf(stderr, "RSP: Error receiving\n");
       return false;
+    }
+
+    if(ret == -1 && errno == EWOULDBLOCK) {
+      // no data available
+      continue;
     }
   } while (ack != '+');
 
@@ -297,7 +315,7 @@ bool rsp_query(char* data, size_t len) {
   }
   else if (strncmp ("qAttached", data, strlen ("qAttached")) == 0)
   {
-    rsp_send_str("");
+    rsp_send_str("1");
     return true;
   }
   else if (strncmp ("qC", data, strlen ("qC")) == 0)
@@ -356,9 +374,7 @@ bool rsp_send_registers() {
   char regs_str[512];
   int i;
 
-  for (i = 0; i < 32; i++) {
-    debug_gpr_read(i, &gpr[i]);
-  }
+  debug_gpr_read_all(gpr);
 
   // now build the string to send back
   for(i = 0; i < 32; i++) {
@@ -376,7 +392,10 @@ bool rsp_reg_read(char* data, size_t len) {
   uint32_t rdata;
   char data_str[10];
 
-  sscanf(data, "%x", &addr);
+  if (sscanf(data, "%x", &addr) != 1) {
+    fprintf(stderr, "Could not parse packet\n");
+    return false;
+  }
 
   if (addr < 32)
     debug_gpr_read(addr, &rdata);
@@ -396,21 +415,21 @@ bool rsp_reg_write(char* data, size_t len) {
   uint32_t wdata;
   char data_str[10];
 
-  sscanf(data, "%x=%08x", &addr, &wdata);
+  if (sscanf(data, "%x=%08x", &addr, &wdata) != 2) {
+    fprintf(stderr, "Could not parse packet\n");
+    return false;
+  }
 
   wdata = ntohl(wdata);
 
   if (addr < 32)
     debug_gpr_write(addr, wdata);
+  else if (addr == 32)
+    debug_write(DBG_NPC_REG, wdata);
   else
     return rsp_send_str("E01");
 
   return rsp_send_str("OK");
-}
-
-bool rsp_write_regs(char* data, size_t len) {
-  printf("REG WRITE IS STILL TODO\n");
-  return false;
 }
 
 bool rsp_mem_read(char* data, size_t len) {
@@ -421,16 +440,19 @@ bool rsp_mem_read(char* data, size_t len) {
   uint32_t rdata;
   int i;
 
-  sscanf(data, "%x,%x", &addr, &length);
+  if (sscanf(data, "%x,%x", &addr, &length) != 2) {
+    fprintf(stderr, "Could not parse packet\n");
+    return false;
+  }
 
   sim_mem_access(0, addr, length, buffer);
 
   for(i = 0; i < length; i++) {
-    rdata = htonl(*((uint32_t*)&buffer[i*4]));
-    snprintf(&reply[i * 8], 9, "%08x", rdata);
+    rdata = buffer[i];
+    snprintf(&reply[i * 2], 3, "%02x", rdata);
   }
 
-  return rsp_send(reply, length*8);
+  return rsp_send(reply, length*2);
 }
 
 bool rsp_mem_write_ascii(char* data, size_t len) {
@@ -442,8 +464,10 @@ bool rsp_mem_write_ascii(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%d:", &addr, &length) != 2)
+  if (sscanf(data, "%x,%d:", &addr, &length) != 2) {
+    fprintf(stderr, "Could not parse packet\n");
     return false;
+  }
 
   for(i = 0; i < len; i++) {
     if (data[i] == ':') {
@@ -499,8 +523,10 @@ bool rsp_mem_write(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%d:", &addr, &length) != 2)
+  if (sscanf(data, "%x,%x:", &addr, &length) != 2) {
+    fprintf(stderr, "Could not parse packet\n");
     return false;
+  }
 
   for(i = 0; i < len; i++) {
     if (data[i] == ':') {
@@ -572,36 +598,27 @@ bool rsp_resume(bool step) {
   int ret;
   char pkt;
   uint32_t hit;
+  uint32_t cause;
   uint32_t ppc;
+  uint32_t npc;
   uint32_t data;
 
 
   // now let's handle software breakpoints
-  // did we stop because of an ebreak?
-  //  If yes, let's check if we inserted it (is in g_bp_list)
   debug_read(DBG_PPC_REG, &ppc);
+  debug_read(DBG_NPC_REG, &npc);
   debug_read(DBG_HIT_REG, &hit);
-  if (hit & 0x1) {
-    for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
-      if (it->addr == ppc) {
-        // we found our bp
-        // This means we now have to replace it with its old value and
-        // single-step once, then replace it with a bp again
-        if (it->is_compressed)
-          sim_mem_access(1, it->addr, 2, (char*)&it->insn_orig);
-        else
-          sim_mem_access(1, it->addr, 4, (char*)&it->insn_orig);
+  debug_read(DBG_CAUSE_REG, &cause);
 
-        debug_write(DBG_CTRL_REG, 0x1);
-        if (it->is_compressed) {
-          data = INSN_BP_COMPRESSED;
-          sim_mem_access(1, it->addr, 2, (char*)&data);
-        } else {
-          data = INSN_BP;
-          sim_mem_access(1, it->addr, 4, (char*)&data);
-        }
-      }
-    }
+  // if there is a breakpoint at this address, let's remove it and single-step over it
+  printf("In resume, PPC is %08X, NPC is %08X, HIT is %08X, CAUSE %08X\n", ppc, npc, hit, cause);
+  printf("There is a BP at PPC here: %d\n", bp_at_addr(ppc));
+  printf("There is a BP at NPC here: %d\n", bp_at_addr(npc));
+  if (bp_at_addr(ppc)) {
+    bp_disable(ppc);
+    debug_write(DBG_NPC_REG, ppc); // re-execute this instruction
+    debug_write(DBG_CTRL_REG, 0x1); // single-step
+    bp_enable(ppc);
   }
 
   // clear hit register, has to be done before CTRL
@@ -630,10 +647,13 @@ bool rsp_resume(bool step) {
     } else {
       ret = recv(socket_client, &pkt, 1, 0);
       if (ret == 1 && pkt == 0x3) {
+        printf("Stopping core\n");
         debug_halt();
       }
     }
   }
+
+  return true;
 }
 
 bool rsp_signal() {
@@ -647,26 +667,29 @@ bool rsp_signal() {
 }
 
 bool rsp_continue(char* data, size_t len) {
+  uint32_t sig;
   uint32_t addr;
   uint32_t npc;
   int i;
+  bool npc_found = false;
 
   // strip signal first
   if (data[0] == 'C') {
-    for (i = 0; i < len; i++) {
-      if (data[i] == ';') {
-        data = &data[i+1];
-        break;
-      }
-    }
+    if (sscanf(data, "C%X;%X", &sig, &addr) == 2)
+      npc_found = true;
+  } else {
+    if (sscanf(data, "c%X", &addr) == 1)
+      npc_found = true;
   }
 
-  sscanf(data, "%x", &addr);
+  if (npc_found) {
+    // only when we have received an address
+    debug_read(DBG_NPC_REG, &npc);
 
-  debug_read(DBG_NPC_REG, &npc);
-
-  if (npc != addr)
-    debug_write(DBG_NPC_REG, addr);
+    printf ("New NPC is %08X\n", addr);
+    if (npc != addr)
+      debug_write(DBG_NPC_REG, addr);
+  }
 
   return rsp_resume(false);
 }
@@ -686,12 +709,13 @@ bool rsp_step(char* data, size_t len) {
     }
   }
 
-  sscanf(data, "%x", &addr);
+  if (sscanf(data, "%x", &addr) == 1) {
+    // only when we have received an address
+    debug_read(DBG_NPC_REG, &npc);
 
-  debug_read(DBG_NPC_REG, &npc);
-
-  if (npc != addr)
-    debug_write(DBG_NPC_REG, addr);
+    if (npc != addr)
+      debug_write(DBG_NPC_REG, addr);
+  }
 
   return rsp_resume(true);
 }
@@ -760,21 +784,7 @@ bool rsp_bp_insert(char* data, size_t len) {
     return false;
   }
 
-  struct bp_insn bp;
-
-  bp.addr = addr;
-  sim_mem_access(0, addr, 4, (char*)&bp.insn_orig);
-  bp.is_compressed = INSN_IS_COMPRESSED(bp.insn_orig);
-
-  g_bp_list.push_back(bp);
-
-  if (bp.is_compressed) {
-    data_bp = INSN_BP_COMPRESSED;
-    sim_mem_access(1, addr, 2, (char*)&data_bp);
-  } else {
-    data_bp = INSN_BP;
-    sim_mem_access(1, addr, 4, (char*)&data_bp);
-  }
+  bp_insert(addr);
 
   return rsp_send_str("OK");
 }
@@ -782,6 +792,7 @@ bool rsp_bp_insert(char* data, size_t len) {
 bool rsp_bp_remove(char* data, size_t len) {
   enum mp_type type;
   uint32_t addr;
+  uint32_t ppc;
   int bp_len;
 
   if (3 != sscanf(data, "z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
@@ -794,16 +805,13 @@ bool rsp_bp_remove(char* data, size_t len) {
     return false;
   }
 
-  for (std::list<struct bp_insn>::iterator it = g_bp_list.begin(); it != g_bp_list.end(); it++) {
-    if (it->addr == addr) {
-      if (it->is_compressed)
-        sim_mem_access(1, it->addr, 2, (char*)&it->insn_orig);
-      else
-        sim_mem_access(1, it->addr, 4, (char*)&it->insn_orig);
+  // check if we are currently on this bp that is removed
+  debug_read(DBG_PPC_REG, &ppc);
+  bp_disable(addr);
 
-      g_bp_list.erase(it);
-      break;
-    }
+  if (addr == ppc) {
+    debug_write(DBG_NPC_REG, ppc); // re-execute this instruction
+    debug_write(DBG_CTRL_REG, 0x1); // single-step
   }
 
   return rsp_send_str("OK");
@@ -816,7 +824,7 @@ bool rsp_loop() {
 
 
   while (rsp_get_packet(&packet)) {
-    printf("Received %.*s\n", packet.raw_len, packet.raw);
+    printf("Received $%.*s\n", packet.raw_len, packet.raw);
 
     if (packet.raw[0] == 0x03) {
       rsp_signal();
@@ -824,9 +832,9 @@ bool rsp_loop() {
       continue;
     }
 
-    switch (packet.raw[1]) {
+    switch (packet.raw[0]) {
     case 'q':
-      rsp_query(&packet.raw[1], packet.raw_len-4);
+      rsp_query(&packet.raw[0], packet.raw_len);
       break;
 
     case 'g':
@@ -834,25 +842,21 @@ bool rsp_loop() {
       break;
 
     case 'p':
-      rsp_reg_read(&packet.raw[2], packet.raw_len-4);
+      rsp_reg_read(&packet.raw[1], packet.raw_len-1);
       break;
 
     case 'P':
-      rsp_reg_write(&packet.raw[2], packet.raw_len-4);
-      break;
-
-    case 'G':
-      rsp_write_regs(&packet.raw[2], packet.raw_len-4);
+      rsp_reg_write(&packet.raw[1], packet.raw_len-1);
       break;
 
     case 'c':
     case 'C':
-      rsp_continue(&packet.raw[1], packet.raw_len-4);
+      rsp_continue(&packet.raw[0], packet.raw_len);
       break;
 
     case 's':
     case 'S':
-      rsp_step(&packet.raw[1], packet.raw_len-4);
+      rsp_step(&packet.raw[0], packet.raw_len);
       break;
 
     case 'H':
@@ -860,7 +864,7 @@ bool rsp_loop() {
       break;
 
     case 'm':
-      rsp_mem_read(&packet.raw[2], packet.raw_len-4);
+      rsp_mem_read(&packet.raw[1], packet.raw_len-1);
       break;
 
     case '?':
@@ -868,27 +872,27 @@ bool rsp_loop() {
       break;
 
     case 'v':
-      rsp_v(&packet.raw[1], packet.raw_len-4);
+      rsp_v(&packet.raw[0], packet.raw_len);
       break;
 
     case 'M':
-      rsp_mem_write_ascii(&packet.raw[2], packet.raw_len-5);
+      rsp_mem_write_ascii(&packet.raw[1], packet.raw_len-1);
       break;
 
     case 'X':
-      rsp_mem_write(&packet.raw[2], packet.raw_len-5);
+      rsp_mem_write(&packet.raw[1], packet.raw_len-1);
       break;
 
     case 'z':
-      rsp_bp_remove(&packet.raw[1], packet.raw_len-4);
+      rsp_bp_remove(&packet.raw[0], packet.raw_len);
       break;
 
     case 'Z':
-      rsp_bp_insert(&packet.raw[1], packet.raw_len-4);
+      rsp_bp_insert(&packet.raw[0], packet.raw_len);
       break;
 
     default:
-      fprintf(stderr, "Unknown packet: starts with %c\n", packet.raw[1]);
+      fprintf(stderr, "Unknown packet: starts with %c\n", packet.raw[0]);
       break;
     }
   }
@@ -897,12 +901,12 @@ bool rsp_loop() {
 }
 
 int main() {
-  sim_mem_open();
+  sim_mem_open(4567);
+  debug_halt();
 
   while (1) {
     rsp_open(1234);
     while(!rsp_wait_client());
-    debug_halt();
     rsp_loop();
     rsp_close();
   }

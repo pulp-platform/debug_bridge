@@ -2,6 +2,8 @@
 #include "debug_if.h"
 #include "mem.h"
 
+#include <stdio.h>
+
 bool debug_write(uint32_t addr, uint32_t wdata) {
   return sim_mem_access(1, DEBUG_BASE_ADDR + addr, 4, (char*)&wdata);
 }
@@ -12,8 +14,10 @@ bool debug_read(uint32_t addr, uint32_t* rdata) {
 
 bool debug_halt() {
   uint32_t data;
-  if (!debug_read(DBG_CTRL_REG, &data))
+  if (!debug_read(DBG_CTRL_REG, &data)) {
+    fprintf(stderr, "debug_is_stopped: Reading from CTRL reg failed\n");
     return false;
+  }
 
   data |= 0x1 << 16;
   return debug_write(DBG_CTRL_REG, data);
@@ -21,13 +25,19 @@ bool debug_halt() {
 
 bool debug_is_stopped() {
   uint32_t data;
-  if (!debug_read(DBG_CTRL_REG, &data))
+  if (!debug_read(DBG_CTRL_REG, &data)) {
+    fprintf(stderr, "debug_is_stopped: Reading from CTRL reg failed\n");
     return false;
+  }
 
   if (data & 0x10000)
     return true;
   else
     return false;
+}
+
+bool debug_gpr_read_all(uint32_t *data) {
+  return sim_mem_access(0, DEBUG_BASE_ADDR + 0x1000, 32 * 4, (char*)data);
 }
 
 bool debug_gpr_read(int i, uint32_t *data) {
