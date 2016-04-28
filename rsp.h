@@ -30,6 +30,8 @@ class Rsp {
 
     bool decode(char* data, size_t len);
 
+    bool multithread(char* data, size_t len);
+
     bool cont(char* data, size_t len); // continue, reserved keyword, thus not used as function name
     bool step(char* data, size_t len);
 

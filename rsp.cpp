@@ -149,7 +149,7 @@ Rsp::decode(char* data, size_t len) {
     return this->step(&data[0], len);
 
   case 'H':
-    return this->send_str("OK");
+    return this->multithread(&data[1], len-1);
 
   case 'm':
     return this->mem_read(&data[1], len-1);
@@ -171,6 +171,9 @@ Rsp::decode(char* data, size_t len) {
 
   case 'Z':
     return this->bp_insert(&data[0], len);
+
+  case 'T':
+    return this->send_str("OK"); // threads are always alive
 
   default:
     fprintf(stderr, "Unknown packet: starts with %c\n", data[0]);
@@ -237,7 +240,39 @@ Rsp::step(char* data, size_t len) {
 }
 
 bool
+Rsp::multithread(char* data, size_t len) {
+  int thread_id;
+
+  switch (data[0]) {
+    case 'c':
+    case 'g':
+      if (sscanf(&data[1], "%d", &thread_id) != 1)
+        return false;
+
+      if (thread_id == -1) // affects all threads
+        return this->send_str("OK");
+
+      // we got the thread id, now let's look for this thread in our list
+      for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+        if ((*it)->get_thread_id() == thread_id) {
+          m_dbgif_sel = *it;
+
+          return this->send_str("OK");
+        }
+      }
+
+      return this->send_str("E01");
+      return true;
+  }
+
+  return false;
+}
+
+bool
 Rsp::query(char* data, size_t len) {
+  int ret;
+  char reply[256];
+
   if (strncmp ("qSupported", data, strlen ("qSupported")) == 0)
   {
     return this->send_str("PacketSize=256");
@@ -247,18 +282,36 @@ Rsp::query(char* data, size_t len) {
     // not supported, send empty packet
     return this->send_str("");
   }
-  else if (strncmp ("qT", data, strlen ("qT")) == 0)
-  {
-    // not supported, send empty packet
-    return this->send_str("");
-  }
   else if (strncmp ("qfThreadInfo", data, strlen ("qfThreadInfo")) == 0)
   {
-    return this->send_str("m0");
+    reply[0] = 'm';
+    ret = 1;
+
+    for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+      ret += snprintf(&reply[ret], 256 - ret, "%u,", (*it)->get_thread_id());
+    }
+
+    return this->send(reply, ret-1);
   }
   else if (strncmp ("qsThreadInfo", data, strlen ("qsThreadInfo")) == 0)
   {
     return this->send_str("l");
+  }
+  else if (strncmp ("qThreadExtraInfo", data, strlen ("qThreadExtraInfo")) == 0)
+  {
+    unsigned int thread_id;
+    if (sscanf(data, "qThreadExtraInfo,%d", &thread_id) != 1) {
+      fprintf(stderr, "Could not parse qThreadExtraInfo packet\n");
+      return this->send_str("");
+    }
+
+    const char* str = "PULP Core";
+
+    ret = 0;
+    for(int i = 0; i < strlen(str); i++)
+      ret += snprintf(&reply[ret], 256 - ret, "%02X", str[i]);
+
+    return this->send(reply, ret);
   }
   else if (strncmp ("qAttached", data, strlen ("qAttached")) == 0)
   {
@@ -266,7 +319,8 @@ Rsp::query(char* data, size_t len) {
   }
   else if (strncmp ("qC", data, strlen ("qC")) == 0)
   {
-    return this->send_str("");
+    snprintf(reply, 64, "0.%u", m_dbgif_sel->get_thread_id());
+    return this->send_str(reply);
   }
   else if (strncmp ("qSymbol", data, strlen ("qSymbol")) == 0)
   {
@@ -275,6 +329,11 @@ Rsp::query(char* data, size_t len) {
   else if (strncmp ("qOffsets", data, strlen ("qOffsets")) == 0)
   {
     return this->send_str("Text=0;Data=0;Bss=0");
+  }
+  else if (strncmp ("qT", data, strlen ("qT")) == 0)
+  {
+    // not supported, send empty packet
+    return this->send_str("");
   }
 
   fprintf(stderr, "Unknown query packet\n");

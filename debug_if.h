@@ -35,8 +35,13 @@ class DbgIF {
     bool csr_write(unsigned int addr, uint32_t wdata);
     bool csr_read(unsigned int addr, uint32_t* rdata);
 
+    unsigned int get_thread_id() { return m_thread_id; }
+
   private:
     unsigned int m_base_addr;
+
+    unsigned int m_thread_id;
+
     MemIF* m_mem;
 };
 

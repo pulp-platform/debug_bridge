@@ -23,8 +23,14 @@ int main() {
 
   BreakPoints* bp = new BreakPoints(mem);
 
+#if 0
   dbgif = new DbgIF(mem, 0x1A110000);
   dbgifs.push_back(dbgif);
+#endif
+  dbgifs.push_back(new DbgIF(mem, 0x10300000));
+  dbgifs.push_back(new DbgIF(mem, 0x10308000));
+  dbgifs.push_back(new DbgIF(mem, 0x10310000));
+  dbgifs.push_back(new DbgIF(mem, 0x10318000));
 
   Rsp* rsp = new Rsp(1234, mem, dbgifs, bp);
 

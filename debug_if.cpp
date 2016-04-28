@@ -7,6 +7,11 @@
 DbgIF::DbgIF(MemIF* mem, unsigned int base_addr) {
   this->m_mem = mem;
   this->m_base_addr = base_addr;
+
+  // let's discover core id and cluster id
+  this->halt();
+  this->csr_read(0xF10, &m_thread_id);
+  printf("Found a core with id %X\n", m_thread_id);
 }
 
 bool
