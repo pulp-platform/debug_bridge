@@ -1,14 +1,38 @@
+#ifndef BREAKPOINTS_H
+#define BREAKPOINTS_H
+
 #include <stdbool.h>
+#include <stdint.h>
+#include <list>
 
-bool bp_insert(unsigned int addr);
-bool bp_remove(unsigned int addr);
+#include "mem.h"
 
-bool bp_clear();
+struct bp_insn {
+  uint32_t addr;
+  uint32_t insn_orig;
+  bool is_compressed;
+};
 
-bool bp_at_addr(unsigned int addr);
+class BreakPoints {
+  public:
+    BreakPoints(MemIF* mem);
 
-bool bp_enable_all();
-bool bp_disable_all();
+    bool insert(unsigned int addr);
+    bool remove(unsigned int addr);
 
-bool bp_disable(unsigned int addr);
-bool bp_enable(unsigned int addr);
+    bool clear();
+
+    bool at_addr(unsigned int addr);
+
+    bool enable_all();
+    bool disable_all();
+
+    bool disable(unsigned int addr);
+    bool enable(unsigned int addr);
+
+  private:
+    std::list<struct bp_insn> m_bp_list;
+    MemIF* m_mem;
+};
+
+#endif

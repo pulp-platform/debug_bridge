@@ -1,8 +1,10 @@
 
 
-SRCS = main.cpp debug_if.cpp breakpoints.cpp
+CXXFLAGS=
+SRCS = main.cpp debug_if.cpp breakpoints.cpp rsp.cpp
 
 ifdef fpga
+	CXXFLAGS+=-DFPGA
 	CXX=arm-xilinx-linux-gnueabi-g++
 	SRCS += fpga.cpp
 else
@@ -18,7 +20,7 @@ clean:
 	rm -f ./debug_bridge
 
 debug_bridge: $(SRCS)
-	$(CXX) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 ifdef fpga
 push: debug_bridge

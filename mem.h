@@ -1,6 +1,13 @@
+#ifndef MEM_H
+#define MEM_H
+
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
 
-bool sim_mem_open(int port);
-bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer);
+class MemIF {
+  public:
+    virtual bool access(bool write, unsigned int addr, int size, char* buffer) = 0;
+};
+
+#endif

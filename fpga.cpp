@@ -1,4 +1,4 @@
-#include "mem.h"
+#include "fpga.h"
 
 #include <byteswap.h>
 #include <stdio.h>
@@ -19,31 +19,20 @@
 
 #define SPIDEV               "/dev/spidev32766.0"
 
-int g_spi_fd;
 
-bool sim_mem_open(int port) {
-  bool retval = true;
+FpgaIF::FpgaIF() {
   // open spidev
   g_spi_fd = open(SPIDEV, O_RDWR);
   if (g_spi_fd <= 0) {
     perror("Device not found\n");
-
-    retval = false;
-    goto fail;
+    exit(1);
   }
 
-  printf("Mem connected!");
-
-  return true;
-
-fail:
-  // close spidev
-  close(g_spi_fd);
-
-  return retval;
+  printf("FPGA SPI device opened!\n");
 }
 
-bool sim_mem_write(uint32_t addr, uint8_t be, uint32_t wdata) {
+bool
+FpgaIF::mem_write(uint32_t addr, uint8_t be, uint32_t wdata) {
   char wr_buf[9];
 
   wr_buf[0] = 0x02; // write command
@@ -67,7 +56,8 @@ bool sim_mem_write(uint32_t addr, uint8_t be, uint32_t wdata) {
   return true;
 }
 
-bool sim_mem_read(uint32_t addr, uint32_t *rdata) {
+bool
+FpgaIF::mem_read(uint32_t addr, uint32_t *rdata) {
   char wr_buf[256];
   char rd_buf[256];
   int i;
@@ -106,7 +96,8 @@ bool sim_mem_read(uint32_t addr, uint32_t *rdata) {
   return true;
 }
 
-bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
+bool
+FpgaIF::access(bool write, unsigned int addr, int size, char* buffer) {
   bool retval = true;
   uint32_t rdata;
   uint8_t be;
@@ -118,7 +109,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
     // bytes
     if (addr & 0x1) {
       be = 1 << (addr & 0x3);
-      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      retval = retval && this->mem_write(addr, be, *((uint32_t*)buffer));
       addr   += 1;
       size   -= 1;
       buffer += 1;
@@ -127,14 +118,14 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
     // half-words
     if (addr & 0x2) {
       be = 0x3 << (addr & 0x3);
-      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      retval = retval && this->mem_write(addr, be, *((uint32_t*)buffer));
       addr   += 2;
       size   -= 2;
       buffer += 2;
     }
 
     while (size >= 4) {
-      retval = retval && sim_mem_write(addr, 0xF, *((uint32_t*)buffer));
+      retval = retval && this->mem_write(addr, 0xF, *((uint32_t*)buffer));
       addr   += 4;
       size   -= 4;
       buffer += 4;
@@ -143,7 +134,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
     // half-words
     if (addr & 0x2) {
       be = 0x3 << (addr & 0x3);
-      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      retval = retval && this->mem_write(addr, be, *((uint32_t*)buffer));
       addr   += 2;
       size   -= 2;
       buffer += 2;
@@ -152,7 +143,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
     // bytes
     if (addr & 0x1) {
       be = 1 << (addr & 0x3);
-      retval = retval && sim_mem_write(addr, be, *((uint32_t*)buffer));
+      retval = retval && this->mem_write(addr, be, *((uint32_t*)buffer));
       addr   += 1;
       size   -= 1;
       buffer += 1;
@@ -162,7 +153,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
 
     // bytes
     if (addr & 0x1) {
-      retval = retval && sim_mem_read(addr, &rdata);
+      retval = retval && this->mem_read(addr, &rdata);
       buffer[0] = rdata;
       addr   += 1;
       size   -= 1;
@@ -171,7 +162,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
 
     // half-words
     if (addr & 0x2) {
-      retval = retval && sim_mem_read(addr, &rdata);
+      retval = retval && this->mem_read(addr, &rdata);
       buffer[0] = rdata;
       buffer[1] = rdata >> 8;
       addr   += 2;
@@ -180,7 +171,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
     }
 
     while (size >= 4) {
-      retval = retval && sim_mem_read(addr, &rdata);
+      retval = retval && this->mem_read(addr, &rdata);
       buffer[0] = rdata;
       buffer[1] = rdata >> 8;
       buffer[2] = rdata >> 16;
@@ -192,7 +183,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
 
     // half-words
     if (addr & 0x2) {
-      retval = retval && sim_mem_read(addr, &rdata);
+      retval = retval && this->mem_read(addr, &rdata);
       buffer[0] = rdata;
       buffer[1] = rdata >> 8;
       addr   += 2;
@@ -202,7 +193,7 @@ bool sim_mem_access(bool write, unsigned int addr, int size, char* buffer) {
 
     // bytes
     if (addr & 0x1) {
-      retval = retval && sim_mem_read(addr, &rdata);
+      retval = retval && this->mem_read(addr, &rdata);
       buffer[0] = rdata;
       addr   += 1;
       size   -= 1;

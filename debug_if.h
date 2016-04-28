@@ -1,10 +1,11 @@
+#ifndef DEBUG_IF_H
+#define DEBUG_IF_H
+
+#include "mem.h"
 
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-// TODO: this should be a parameter in a struct or so
-#define DEBUG_BASE_ADDR 0x1A110000
 
 #define DBG_CTRL_REG  0x0
 #define DBG_HIT_REG   0x4
@@ -15,14 +16,28 @@
 
 #define DBG_CAUSE_BP  0x3
 
-bool debug_write(uint32_t addr, uint32_t wdata);
-bool debug_read(uint32_t addr, uint32_t* rdata);
-bool debug_halt();
-bool debug_resume(bool step);
-bool debug_gpr_read_all(uint32_t *data);
-bool debug_gpr_read(int i, uint32_t *data);
-bool debug_gpr_write(int i, uint32_t data);
-bool debug_csr_read(int i, uint32_t *data);
-bool debug_csr_write(int i, uint32_t data);
-bool debug_is_stopped();
+class DbgIF {
+  public:
+    DbgIF(MemIF* mem, unsigned int base_addr);
+    ~DbgIF();
 
+    bool halt();
+    bool resume(bool step);
+    bool is_stopped();
+
+    bool write(unsigned int addr, uint32_t wdata);
+    bool read(unsigned int addr, uint32_t* rdata);
+
+    bool gpr_write(unsigned int addr, uint32_t wdata);
+    bool gpr_read_all(uint32_t* data);
+    bool gpr_read(unsigned int addr, uint32_t* data);
+
+    bool csr_write(unsigned int addr, uint32_t wdata);
+    bool csr_read(unsigned int addr, uint32_t* rdata);
+
+  private:
+    unsigned int m_base_addr;
+    MemIF* m_mem;
+};
+
+#endif
