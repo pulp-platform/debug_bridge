@@ -61,11 +61,13 @@ class Rsp {
     bool bp_insert(char* data, size_t len);
     bool bp_remove(char* data, size_t len);
 
+    DbgIF* get_dbgif(int thread_id);
+
     int m_socket_port;
     int m_socket_in;
     int m_socket_client;
 
-    DbgIF* m_dbgif_sel;
+    int m_thread_sel;
     MemIF* m_mem;
     BreakPoints* m_bp;
     std::list<DbgIF*> m_dbgifs;

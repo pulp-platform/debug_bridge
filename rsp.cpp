@@ -37,7 +37,7 @@ Rsp::Rsp(int socket_port, MemIF* mem, std::list<DbgIF*> list_dbgif, BreakPoints*
     exit(1);
   }
 
-  m_dbgif_sel = m_dbgifs.front();
+  m_thread_sel = m_dbgifs.front()->get_thread_id();
 }
 
 bool
@@ -175,6 +175,10 @@ Rsp::decode(char* data, size_t len) {
   case 'T':
     return this->send_str("OK"); // threads are always alive
 
+  case 'D':
+    this->send_str("OK");
+    return false;
+
   default:
     fprintf(stderr, "Unknown packet: starts with %c\n", data[0]);
     break;
@@ -190,6 +194,7 @@ Rsp::cont(char* data, size_t len) {
   uint32_t npc;
   int i;
   bool npc_found = false;
+  DbgIF* dbgif;
 
   // strip signal first
   if (data[0] == 'C') {
@@ -201,12 +206,12 @@ Rsp::cont(char* data, size_t len) {
   }
 
   if (npc_found) {
+    dbgif = this->get_dbgif(m_thread_sel);
     // only when we have received an address
-    m_dbgif_sel->read(DBG_NPC_REG, &npc);
+    dbgif->read(DBG_NPC_REG, &npc);
 
-    printf ("New NPC is %08X\n", addr);
     if (npc != addr)
-      m_dbgif_sel->write(DBG_NPC_REG, addr);
+      dbgif->write(DBG_NPC_REG, addr);
   }
 
   return this->resume(false);
@@ -217,6 +222,7 @@ Rsp::step(char* data, size_t len) {
   uint32_t addr;
   uint32_t npc;
   int i;
+  DbgIF* dbgif;
 
   // strip signal first
   if (data[0] == 'S') {
@@ -229,11 +235,12 @@ Rsp::step(char* data, size_t len) {
   }
 
   if (sscanf(data, "%x", &addr) == 1) {
+    dbgif = this->get_dbgif(m_thread_sel);
     // only when we have received an address
-    m_dbgif_sel->read(DBG_NPC_REG, &npc);
+    dbgif->read(DBG_NPC_REG, &npc);
 
     if (npc != addr)
-      m_dbgif_sel->write(DBG_NPC_REG, addr);
+      dbgif->write(DBG_NPC_REG, addr);
   }
 
   return this->resume(true);
@@ -253,12 +260,9 @@ Rsp::multithread(char* data, size_t len) {
         return this->send_str("OK");
 
       // we got the thread id, now let's look for this thread in our list
-      for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-        if ((*it)->get_thread_id() == thread_id) {
-          m_dbgif_sel = *it;
-
-          return this->send_str("OK");
-        }
+      if (this->get_dbgif(thread_id) != NULL) {
+        m_thread_sel = thread_id;
+        return this->send_str("OK");
       }
 
       return this->send_str("E01");
@@ -319,7 +323,7 @@ Rsp::query(char* data, size_t len) {
   }
   else if (strncmp ("qC", data, strlen ("qC")) == 0)
   {
-    snprintf(reply, 64, "0.%u", m_dbgif_sel->get_thread_id());
+    snprintf(reply, 64, "0.%u", this->get_dbgif(m_thread_sel)->get_thread_id());
     return this->send_str(reply);
   }
   else if (strncmp ("qSymbol", data, strlen ("qSymbol")) == 0)
@@ -345,7 +349,8 @@ bool
 Rsp::v_packet(char* data, size_t len) {
   if (strncmp ("vKill", data, strlen ("vKill")) == 0)
   {
-    return this->send_str("OK");
+    this->send_str("OK");
+    return false;
   }
   else if (strncmp ("vCont?", data, strlen ("vCont?")) == 0)
   {
@@ -365,7 +370,7 @@ Rsp::regs_send() {
   char regs_str[512];
   int i;
 
-  m_dbgif_sel->gpr_read_all(gpr);
+  this->get_dbgif(m_thread_sel)->gpr_read_all(gpr);
 
   // now build the string to send back
   for(i = 0; i < 32; i++) {
@@ -390,7 +395,7 @@ Rsp::reg_read(char* data, size_t len) {
   }
 
   if (addr < 32)
-    m_dbgif_sel->gpr_read(addr, &rdata);
+    this->get_dbgif(m_thread_sel)->gpr_read(addr, &rdata);
   else if (addr == 0x20)
     this->pc_read(&rdata);
   else
@@ -407,6 +412,7 @@ Rsp::reg_write(char* data, size_t len) {
   uint32_t addr;
   uint32_t wdata;
   char data_str[10];
+  DbgIF* dbgif;
 
   if (sscanf(data, "%x=%08x", &addr, &wdata) != 2) {
     fprintf(stderr, "Could not parse packet\n");
@@ -415,10 +421,11 @@ Rsp::reg_write(char* data, size_t len) {
 
   wdata = ntohl(wdata);
 
+  dbgif = this->get_dbgif(m_thread_sel);
   if (addr < 32)
-    m_dbgif_sel->gpr_write(addr, wdata);
+    dbgif->gpr_write(addr, wdata);
   else if (addr == 32)
-    m_dbgif_sel->write(DBG_NPC_REG, wdata);
+    dbgif->write(DBG_NPC_REG, wdata);
   else
     return this->send_str("E01");
 
@@ -552,14 +559,17 @@ Rsp::signal() {
   int signal;
   char str[4];
   int len;
+  DbgIF* dbgif;
 
-  m_dbgif_sel->write(DBG_IE_REG, 0xFFFF);
+  dbgif = this->get_dbgif(m_thread_sel);
+
+  dbgif->write(DBG_IE_REG, 0xFFFF);
 
   // figure out why we are stopped
-  if (m_dbgif_sel->is_stopped()) {
-    if (!m_dbgif_sel->read(DBG_HIT_REG, &hit))
+  if (dbgif->is_stopped()) {
+    if (!dbgif->read(DBG_HIT_REG, &hit))
       return false;
-    if (!m_dbgif_sel->read(DBG_CAUSE_REG, &cause))
+    if (!dbgif->read(DBG_CAUSE_REG, &cause))
       return false;
 
     if (hit & 0x1)
@@ -648,12 +658,15 @@ Rsp::pc_read(unsigned int* pc) {
   uint32_t ppc;
   uint32_t cause;
   uint32_t hit;
+  DbgIF* dbgif;
 
-  m_dbgif_sel->read(DBG_PPC_REG, &ppc);
-  m_dbgif_sel->read(DBG_NPC_REG, &npc);
+  dbgif = this->get_dbgif(m_thread_sel);
 
-  m_dbgif_sel->read(DBG_HIT_REG, &hit);
-  m_dbgif_sel->read(DBG_CAUSE_REG, &cause);
+  dbgif->read(DBG_PPC_REG, &ppc);
+  dbgif->read(DBG_NPC_REG, &npc);
+
+  dbgif->read(DBG_HIT_REG, &hit);
+  dbgif->read(DBG_CAUSE_REG, &cause);
 
   if (hit & 0x1)
     *pc = npc;
@@ -680,29 +693,31 @@ Rsp::resume(bool step) {
   uint32_t ppc;
   uint32_t npc;
   uint32_t data;
+  DbgIF* dbgif;
 
+  dbgif = this->get_dbgif(m_thread_sel);
 
   // now let's handle software breakpoints
-  m_dbgif_sel->read(DBG_PPC_REG, &ppc);
-  m_dbgif_sel->read(DBG_NPC_REG, &npc);
-  m_dbgif_sel->read(DBG_HIT_REG, &hit);
-  m_dbgif_sel->read(DBG_CAUSE_REG, &cause);
+  dbgif->read(DBG_PPC_REG, &ppc);
+  dbgif->read(DBG_NPC_REG, &npc);
+  dbgif->read(DBG_HIT_REG, &hit);
+  dbgif->read(DBG_CAUSE_REG, &cause);
 
   // if there is a breakpoint at this address, let's remove it and single-step over it
   if (m_bp->at_addr(ppc)) {
     m_bp->disable(ppc);
-    m_dbgif_sel->write(DBG_NPC_REG, ppc); // re-execute this instruction
-    m_dbgif_sel->write(DBG_CTRL_REG, 0x1); // single-step
+    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
+    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
     m_bp->enable(ppc);
   }
 
   // clear hit register, has to be done before CTRL
-  m_dbgif_sel->write(DBG_HIT_REG, 0);
+  dbgif->write(DBG_HIT_REG, 0);
 
   if (step)
-    m_dbgif_sel->write(DBG_CTRL_REG, 0x1);
+    dbgif->write(DBG_CTRL_REG, 0x1);
   else
-    m_dbgif_sel->write(DBG_CTRL_REG, 0);
+    dbgif->write(DBG_CTRL_REG, 0);
 
   fd_set rfds;
   struct timeval tv;
@@ -716,14 +731,14 @@ Rsp::resume(bool step) {
     tv.tv_usec = 100 * 1000;
 
     if (select(m_socket_client+1, &rfds, NULL, NULL, &tv) == 0) {
-      if (m_dbgif_sel->is_stopped()) {
+      if (dbgif->is_stopped()) {
         return this->signal();
       }
     } else {
       ret = recv(m_socket_client, &pkt, 1, 0);
       if (ret == 1 && pkt == 0x3) {
         printf("Stopping core\n");
-        m_dbgif_sel->halt();
+        dbgif->halt();
       }
     }
   }
@@ -876,6 +891,9 @@ Rsp::bp_remove(char* data, size_t len) {
   uint32_t addr;
   uint32_t ppc;
   int bp_len;
+  DbgIF* dbgif;
+
+  dbgif = this->get_dbgif(m_thread_sel);
 
   if (3 != sscanf(data, "z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
     fprintf(stderr, "Could not get three arguments\n");
@@ -890,12 +908,22 @@ Rsp::bp_remove(char* data, size_t len) {
   m_bp->remove(addr);
 
   // check if we are currently on this bp that is removed
-  m_dbgif_sel->read(DBG_PPC_REG, &ppc);
+  dbgif->read(DBG_PPC_REG, &ppc);
 
   if (addr == ppc) {
-    m_dbgif_sel->write(DBG_NPC_REG, ppc); // re-execute this instruction
-    m_dbgif_sel->write(DBG_CTRL_REG, 0x1); // single-step
+    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
+    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
   }
 
   return this->send_str("OK");
+}
+
+DbgIF*
+Rsp::get_dbgif(int thread_id) {
+  for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+    if ((*it)->get_thread_id() == thread_id)
+      return *it;
+  }
+
+  return NULL;
 }
