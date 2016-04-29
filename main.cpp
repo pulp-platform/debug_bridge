@@ -6,13 +6,66 @@
 #endif
 
 #include "debug_if.h"
+#include "cache.h"
 #include "breakpoints.h"
 #include "rsp.h"
+
+enum Platforms { unknown, PULPino, PULP, GAP };
+
+Platforms platform_detect(MemIF* mem) {
+  uint32_t info;
+
+  mem->access(0, 0x1A107000, 4, (char*)&info);
+
+  if (info & 0xFFFF == 0x8081) {
+    printf ("Detected PULPino\n");
+    return PULPino;
+  } else {
+    mem->access(0, 0x1B220000 + 0x4000 + 0xF10 * 4, 4, (char*)&info);
+    if (info >> 5 == 32) {
+      printf ("Detected GAP\n");
+      return GAP;
+    } else {
+      printf ("Detected PULP\n");
+      return PULP;
+    }
+  }
+}
+
+bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list) {
+  uint32_t info;
+  unsigned int ncores;
+
+  mem->access(0, 0x1A103010, 4, (char*)&info);
+
+  ncores = info >> 16;
+
+  for(int i = 0; i < ncores; i++) {
+    p_list->push_back(new DbgIF(mem, 0x10300000 + i * 0x8000));
+  }
+
+  return true;
+}
+
+bool platform_gap(MemIF* mem, std::list<DbgIF*>* p_list) {
+  platform_pulp(mem, p_list);
+  p_list->push_back(new DbgIF(mem, 0x1B220000));
+
+  return true;
+}
+
+bool platform_pulpino(MemIF* mem, std::list<DbgIF*>* p_list) {
+  p_list->push_back(new DbgIF(mem, 0x1A110000));
+
+  return true;
+}
 
 int main() {
   MemIF* mem;
   std::list<DbgIF*> dbgifs;
-  DbgIF* dbgif;
+  Cache* cache;
+  //Platforms platform = unknown;
+  Platforms platform = GAP;
 
   // initialization
 #ifdef FPGA
@@ -21,16 +74,34 @@ int main() {
   mem = new SimIF("localhost", 4567);
 #endif
 
-  BreakPoints* bp = new BreakPoints(mem);
+  if (platform == unknown) {
+    printf ("Unknown platform, trying auto-detect\n");
+    platform = platform_detect(mem);
+  }
 
-#if 0
-  dbgif = new DbgIF(mem, 0x1A110000);
-  dbgifs.push_back(dbgif);
-#endif
-  dbgifs.push_back(new DbgIF(mem, 0x10300000));
-  dbgifs.push_back(new DbgIF(mem, 0x10308000));
-  dbgifs.push_back(new DbgIF(mem, 0x10310000));
-  dbgifs.push_back(new DbgIF(mem, 0x10318000));
+  switch(platform) {
+    case GAP:
+      cache = new GAPCache(mem, 0x10201400, 0x1B200000);
+      platform_gap(mem, &dbgifs);
+      break;
+
+    case PULP:
+      cache = new PulpCache(mem, 0x10201400);
+      platform_pulp(mem, &dbgifs);
+      break;
+
+    case PULPino:
+      cache = new Cache(mem);
+      platform_pulpino(mem, &dbgifs);
+      break;
+
+    default:
+      printf ("ERROR: Unsupported platform found!\n");
+      return 1;
+  }
+
+
+  BreakPoints* bp = new BreakPoints(mem, cache);
 
   Rsp* rsp = new Rsp(1234, mem, dbgifs, bp);
 
@@ -50,6 +121,7 @@ int main() {
   }
 
   delete bp;
+  delete cache;
   delete mem;
 
   return 0;

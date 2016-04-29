@@ -75,8 +75,6 @@ Rsp::open() {
   fprintf(stderr, "Listening on port %d\n", m_socket_port);
 
   // now clear resources
-  m_bp->clear();
-
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
     (*it)->halt();
   }
@@ -86,6 +84,7 @@ Rsp::open() {
 
 void
 Rsp::close() {
+  m_bp->clear();
   ::close(m_socket_in);
 }
 

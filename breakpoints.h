@@ -6,6 +6,7 @@
 #include <list>
 
 #include "mem.h"
+#include "cache.h"
 
 struct bp_insn {
   uint32_t addr;
@@ -15,7 +16,7 @@ struct bp_insn {
 
 class BreakPoints {
   public:
-    BreakPoints(MemIF* mem);
+    BreakPoints(MemIF* mem, Cache* cache);
 
     bool insert(unsigned int addr);
     bool remove(unsigned int addr);
@@ -33,6 +34,7 @@ class BreakPoints {
   private:
     std::list<struct bp_insn> m_bp_list;
     MemIF* m_mem;
+    Cache* m_cache;
 };
 
 #endif

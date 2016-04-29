@@ -1,7 +1,7 @@
 
 
 CXXFLAGS=
-SRCS = main.cpp debug_if.cpp breakpoints.cpp rsp.cpp
+SRCS = main.cpp debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp
 
 ifdef fpga
 	CXXFLAGS+=-DFPGA
