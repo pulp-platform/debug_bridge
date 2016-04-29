@@ -74,3 +74,8 @@ bool
 DbgIF::csr_write(unsigned int i, uint32_t data) {
   return this->write(0x4000 + i * 4, data);
 }
+
+void
+DbgIF::get_name(char* str, size_t len) {
+  snprintf(str, len, "Core %08X", this->m_thread_id);
+}

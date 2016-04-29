@@ -37,6 +37,8 @@ class DbgIF {
 
     unsigned int get_thread_id() { return m_thread_id; }
 
+    void get_name(char* str, size_t len);
+
   private:
     unsigned int m_base_addr;
 

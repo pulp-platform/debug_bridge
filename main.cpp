@@ -15,12 +15,14 @@ enum Platforms { unknown, PULPino, PULP, GAP };
 Platforms platform_detect(MemIF* mem) {
   uint32_t info;
 
-  mem->access(0, 0x1A107000, 4, (char*)&info);
+  mem->access(0, 0x10000000, 4, (char*)&info);
 
-  if (info & 0xFFFF == 0x8081) {
+  if (info == 0xDEADBEEF) {
     printf ("Detected PULPino\n");
     return PULPino;
   } else {
+    info = 1 << 16;
+    mem->access(1, 0x1B220000 + 0x0, 4, (char*)&info);
     mem->access(0, 0x1B220000 + 0x4000 + 0xF10 * 4, 4, (char*)&info);
     if (info >> 5 == 32) {
       printf ("Detected GAP\n");
@@ -44,7 +46,9 @@ bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list) {
     p_list->push_back(new DbgIF(mem, 0x10300000 + i * 0x8000));
   }
 
-  return true;
+  // set all-stop mode, so that all cores go to debug when one enters debug mode
+  info = 0xFFFFFFFF;
+  return mem->access(1, 0x10200038, 4, (char*)&info);
 }
 
 bool platform_gap(MemIF* mem, std::list<DbgIF*>* p_list) {
@@ -64,8 +68,7 @@ int main() {
   MemIF* mem;
   std::list<DbgIF*> dbgifs;
   Cache* cache;
-  //Platforms platform = unknown;
-  Platforms platform = GAP;
+  Platforms platform = unknown;
 
   // initialization
 #ifdef FPGA

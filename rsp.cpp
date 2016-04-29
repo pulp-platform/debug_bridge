@@ -302,13 +302,20 @@ Rsp::query(char* data, size_t len) {
   }
   else if (strncmp ("qThreadExtraInfo", data, strlen ("qThreadExtraInfo")) == 0)
   {
+    const char* str_default = "Unknown Core";
+    char str[256];
     unsigned int thread_id;
     if (sscanf(data, "qThreadExtraInfo,%d", &thread_id) != 1) {
       fprintf(stderr, "Could not parse qThreadExtraInfo packet\n");
       return this->send_str("");
     }
 
-    const char* str = "PULP Core";
+    DbgIF* dbgif = this->get_dbgif(thread_id);
+
+    if (dbgif != NULL)
+      dbgif->get_name(str, 256);
+    else
+      strcpy(str, str_default);
 
     ret = 0;
     for(int i = 0; i < strlen(str); i++)
