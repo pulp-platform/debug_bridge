@@ -57,12 +57,12 @@ DbgIF::gpr_read_all(uint32_t *data) {
 
 bool
 DbgIF::gpr_read(unsigned int i, uint32_t *data) {
-  return this->read(0x1000 + i * 4, data);
+  return this->read(0x0400 + i * 4, data);
 }
 
 bool
 DbgIF::gpr_write(unsigned int i, uint32_t data) {
-  return this->write(0x1000 + i * 4, data);
+  return this->write(0x0400 + i * 4, data);
 }
 
 bool

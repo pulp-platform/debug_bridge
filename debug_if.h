@@ -11,8 +11,8 @@
 #define DBG_HIT_REG   0x4
 #define DBG_IE_REG    0x8
 #define DBG_CAUSE_REG 0xC
-#define DBG_NPC_REG   0x1200
-#define DBG_PPC_REG   0x1204
+#define DBG_NPC_REG   0x2000
+#define DBG_PPC_REG   0x2004
 
 #define DBG_CAUSE_BP  0x3
 
