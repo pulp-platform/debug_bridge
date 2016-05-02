@@ -602,18 +602,25 @@ Rsp::signal() {
 bool
 Rsp::send(const char* data, size_t len) {
   int ret;
-  size_t raw_len = len + 4;
-  char* raw = (char*)malloc(raw_len);
+  int i;
+  size_t raw_len = 0;
+  char* raw = (char*)malloc(len * 2 + 4);
   unsigned int checksum = 0;
 
-  raw[0] = '$';
-  raw[raw_len - 3] = '#';
+  raw[raw_len++] = '$';
 
-  // TODO: ESCAPING IS REQUIRED HERE!!!!
-  if (len > 0) {
-    memcpy(raw + 1, data, len);
-    for(int i = 0; i < len; i++) {
-      checksum += data[i];
+  for (i = 0; i < len; i++) {
+    char c = data[i];
+
+    // check if escaping needed
+    if (c == '#' || c == '%' || c == '}' || c == '*') {
+      raw[raw_len++] = '}';
+      raw[raw_len++] = c;
+      checksum += '}';
+      checksum += c;
+    } else {
+      raw[raw_len++] = c;
+      checksum += c;
     }
   }
 
@@ -622,8 +629,9 @@ Rsp::send(const char* data, size_t len) {
   char checksum_str[3];
   snprintf(checksum_str, 3, "%02x", checksum);
 
-  raw[raw_len - 2] = checksum_str[0];
-  raw[raw_len - 1] = checksum_str[1];
+  raw[raw_len++] = '#';
+  raw[raw_len++] = checksum_str[0];
+  raw[raw_len++] = checksum_str[1];
 
   char ack;
   do {

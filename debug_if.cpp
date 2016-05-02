@@ -52,7 +52,7 @@ DbgIF::is_stopped() {
 
 bool
 DbgIF::gpr_read_all(uint32_t *data) {
-  return m_mem->access(0, m_base_addr + 0x1000, 32 * 4, (char*)data);
+  return m_mem->access(0, m_base_addr + 0x0400, 32 * 4, (char*)data);
 }
 
 bool
