@@ -890,7 +890,8 @@ Rsp::bp_insert(char* data, size_t len) {
   }
 
   if (type != BP_MEMORY) {
-    fprintf(stderr, "Not a memory bp\n");
+    fprintf(stderr, "ERROR: Not a memory bp\n");
+    this->send_str("");
     return false;
   }
 
