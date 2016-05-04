@@ -70,8 +70,11 @@ int main() {
 
   // initialization
 #ifdef FPGA
-  //mem = new FpgaIF();
+#ifdef PULPEMU
   mem = new ZynqAPBSPIIF();
+#else
+  mem = new FpgaIF();
+#endif
 #else
   mem = new SimIF("localhost", 4567);
 #endif

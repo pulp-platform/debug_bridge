@@ -1,12 +1,16 @@
-
-
 CXXFLAGS=
 SRCS = main.cpp debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp
 
 ifdef fpga
+ifdef pulp
+	CXXFLAGS+=-DFPGA -DPULPEMU
+	CXX=arm-linux-gnueabihf-g++
+	SRCS += mem_zynq_apb_spi.cpp
+else
 	CXXFLAGS+=-DFPGA
 	CXX=arm-xilinx-linux-gnueabi-g++
-	SRCS += mem_zynq_spi.cpp mem_zynq_apb_spi.cpp
+	SRCS += mem_zynq_spi.cpp
+endif
 else
 	CXX=g++
 	SRCS += sim.cpp
