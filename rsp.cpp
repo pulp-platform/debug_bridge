@@ -265,7 +265,6 @@ Rsp::multithread(char* data, size_t len) {
       }
 
       return this->send_str("E01");
-      return true;
   }
 
   return false;
@@ -753,6 +752,13 @@ Rsp::resume(bool step) {
       if (ret == 1 && pkt == 0x3) {
         printf("Stopping core\n");
         dbgif->halt();
+
+        if (!dbgif->is_stopped()) {
+          printf("ERROR: failed to stop core\n");
+          return false;
+        }
+
+        return this->signal();
       }
     }
   }
