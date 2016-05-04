@@ -1,5 +1,5 @@
-#ifndef SIM_H
-#define SIM_H
+#ifndef MEM_ZYNQ_SPI_H
+#define MEM_ZYNQ_SPI_H
 
 #include "mem.h"
 
@@ -8,6 +8,7 @@
 class FpgaIF : public MemIF {
   public:
     FpgaIF();
+    ~FpgaIF();
 
     bool access(bool write, unsigned int addr, int size, char* buffer);
 

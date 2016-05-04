@@ -1,9 +1,7 @@
 
-#ifdef FPGA
-#include "fpga.h"
-#else
+#include "mem_zynq_spi.h"
+#include "mem_zynq_apb_spi.h"
 #include "sim.h"
-#endif
 
 #include "debug_if.h"
 #include "cache.h"
@@ -72,7 +70,8 @@ int main() {
 
   // initialization
 #ifdef FPGA
-  mem = new FpgaIF();
+  //mem = new FpgaIF();
+  mem = new ZynqAPBSPIIF();
 #else
   mem = new SimIF("localhost", 4567);
 #endif

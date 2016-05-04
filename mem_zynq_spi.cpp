@@ -1,4 +1,4 @@
-#include "fpga.h"
+#include "mem_zynq_spi.h"
 
 #include <byteswap.h>
 #include <stdio.h>
@@ -29,6 +29,10 @@ FpgaIF::FpgaIF() {
   }
 
   printf("FPGA SPI device opened!\n");
+}
+
+FpgaIF::~FpgaIF() {
+  close(g_spi_fd);
 }
 
 bool
