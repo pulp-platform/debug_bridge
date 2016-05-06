@@ -19,10 +19,12 @@ class ZynqAPBSPIIF : public MemIF {
     void mem_read_words(unsigned int addr, int len, char *src);
     void mem_write_words(unsigned int addr, int len, char *src);
 
-    inline void apb_write(uint32_t addr, uint32_t data) const { m_virt_apbspi[addr >> 2] = data; }
-    inline uint32_t apb_read(uint32_t addr) const {      return m_virt_apbspi[addr >> 2]; }
+    inline void apb_write(uint32_t addr, uint32_t data) { m_virt_apbspi[addr >> 2] = data; }
+    inline uint32_t apb_read(uint32_t addr) {      return m_virt_apbspi[addr >> 2]; }
 
     int mmap_gen(uint32_t mem_address, uint32_t mem_size, volatile uint32_t **return_ptr);
+
+    int is_fpga_programmed();
 
     void set_clkdiv(uint32_t clkdiv);
     void set_dummycycles(uint32_t dummycycles);
@@ -31,6 +33,8 @@ class ZynqAPBSPIIF : public MemIF {
 
     bool m_qpi_enabled;
     volatile uint32_t *m_virt_apbspi;
+    volatile uint32_t *m_virt_status;
+    int g_mem_dev;
 };
 
 #endif

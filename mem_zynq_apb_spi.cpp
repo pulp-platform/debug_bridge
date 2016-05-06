@@ -1,15 +1,17 @@
 #include "mem_zynq_apb_spi.h"
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 
 #define PULP_MEM_BASE    0x51070000
-#define PULP_MEM_SIZE    0x40000
+#define PULP_MEM_SIZE    0x10000
 
 #define SPI_DEFAULT_CLKDIV 4
 #define SPI_DEFAULT_DUMMYCYCLES 33
@@ -43,16 +45,44 @@
 ZynqAPBSPIIF::ZynqAPBSPIIF() {
   m_qpi_enabled = false;
 
+  g_mem_dev = ::open("/dev/mem", O_RDWR | O_SYNC);
+  if(g_mem_dev == -1) {
+    printf("mmap_gen: Opening /dev/mem failed\n");
+    exit(1);
+  }
+
+  if(::flock(g_mem_dev, LOCK_NB | LOCK_EX)) {
+     printf("Error %02x\n", errno);
+     printf("/dev/mem is probably locked by another application.\n");
+     close(g_mem_dev);
+     exit(1);
+  }
+
   if (mmap_gen(PULP_MEM_BASE, PULP_MEM_SIZE, &m_virt_apbspi) < 0) {
     printf("Unable to open APB SPI device\n");
     exit(1);
   }
 
+  const uint32_t mem_address = 0xf8007000;
+  const uint32_t mem_size = 0x200;
+  if(mmap_gen(mem_address, mem_size, &m_virt_status) < 0) {
+    printf("Unable to open status device\n");
+    exit(1);
+  }
+
+  if(!is_fpga_programmed()) {
+    printf("Fatal: the FPGA is not programmed.\n");
+    exit(1);
+  }
+
   set_clkdiv(SPI_DEFAULT_CLKDIV);
   set_dummycycles(SPI_DEFAULT_DUMMYCYCLES);
+
+  printf("Zynq APB SPI interface initialized\n");
 }
 
 ZynqAPBSPIIF::~ZynqAPBSPIIF() {
+  close(g_mem_dev);
 }
 
 
@@ -66,16 +96,22 @@ ZynqAPBSPIIF::mmap_gen(
   volatile char *mem_ptr, *virt_ptr;
   volatile uint32_t *uint_ptr;
 
-  int mem_dev = open("/dev/mem", O_RDWR | O_SYNC);
+  int mem_dev = ::open("/dev/mem", O_RDWR | O_SYNC);
   if(mem_dev == -1) {
-    return 1;
+    printf ("mmap_gen: Opening /dev/mem failed\n");
+    return -1;
   }
 
   page_size = sysconf(_SC_PAGESIZE);
   alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
   page_mask = (page_size - 1);
 
-  mem_ptr = (char*)mmap(NULL,
+  if (page_size == -1) {
+    printf("mmap_gen: sysconf failed to get page size\n");
+    return -4;
+  }
+
+  mem_ptr = (char*)::mmap(NULL,
                  alloc_mem_size,
                  PROT_READ | PROT_WRITE,
                  MAP_SHARED,
@@ -83,27 +119,39 @@ ZynqAPBSPIIF::mmap_gen(
                  (mem_address & ~page_mask));
 
   if (mem_ptr == MAP_FAILED) {
-    return 2;
+    printf("mmap_gen: map failed\n");
+    return -2;
   }
 
   virt_ptr = (mem_ptr + (mem_address & page_mask));
   uint_ptr = (volatile uint32_t *) virt_ptr;
   *return_ptr = uint_ptr;
-  return mem_dev;
+
+  close(mem_dev);
+
+  return 0;
 }
 
 
-void ZynqAPBSPIIF::set_clkdiv(uint32_t clkdiv) {
+int
+ZynqAPBSPIIF::is_fpga_programmed() {
+  return (m_virt_status[0xC >> 2] & 0x4) >> 2;
+}
+
+void
+ZynqAPBSPIIF::set_clkdiv(uint32_t clkdiv) {
   // set clk divider to clkdiv
   apb_write(SPI_CLKDIV, clkdiv);
 }
 
-void ZynqAPBSPIIF::set_dummycycles(uint32_t dummycycles) {
+void
+ZynqAPBSPIIF::set_dummycycles(uint32_t dummycycles) {
   // set dummy cycles to dummycycles
   apb_write(SPI_DUMMY, dummycycles);
 }
 
-void ZynqAPBSPIIF::qpi_enable(bool enable) {
+void
+ZynqAPBSPIIF::qpi_enable(bool enable) {
   if (enable == m_qpi_enabled) {
     printf ("QPI is already enabled. Doing nothing\n");
     return;
@@ -129,6 +177,8 @@ void ZynqAPBSPIIF::qpi_enable(bool enable) {
    // poll over completion register
    while(apb_read(SPI_STATUS) != 1);
   }
+
+  m_qpi_enabled = enable;
 }
 
 bool
