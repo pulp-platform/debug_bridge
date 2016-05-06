@@ -30,3 +30,8 @@ ifdef fpga
 push: debug_bridge
 	scp ./debug_bridge $(FPGA_HOSTNAME):/root/
 endif
+
+sdk:
+	make clean all
+	mkdir -p $(PULP_SDK_HOME)/install/ws/bin
+	cp debug_bridge $(PULP_SDK_HOME)/install/ws/bin
