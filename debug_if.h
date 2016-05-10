@@ -19,7 +19,6 @@
 class DbgIF {
   public:
     DbgIF(MemIF* mem, unsigned int base_addr);
-    ~DbgIF();
 
     void flush();
 
