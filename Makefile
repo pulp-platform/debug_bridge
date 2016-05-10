@@ -1,20 +1,25 @@
-CXXFLAGS=
+CXXFLAGS=-std=c++11
 SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp
 
-ifdef fpga
-ifdef pulp
+CXX=g++
+SRCS += sim.cpp
+ifdef pulpemu
 	CXXFLAGS+=-DFPGA -DPULPEMU
 	CXX=arm-linux-gnueabihf-g++
 	SRCS += mem_zynq_apb_spi.cpp
-else
+endif
+ifdef pulpino
 	CXXFLAGS+=-DFPGA
 	CXX=arm-xilinx-linux-gnueabi-g++
 	SRCS += mem_zynq_spi.cpp
 endif
-else
+ifndef pulpino
+ifndef pulpemu
 	CXX=g++
 	SRCS += sim.cpp
 endif
+endif
+
 EXE_SRCS = main.cpp $(SRCS)
 LIB_SRCS = $(SRCS)
 
