@@ -711,26 +711,31 @@ Rsp::resume(bool step) {
   dbgif = this->get_dbgif(m_thread_sel);
 
   // now let's handle software breakpoints
+
   dbgif->read(DBG_PPC_REG, &ppc);
   dbgif->read(DBG_NPC_REG, &npc);
   dbgif->read(DBG_HIT_REG, &hit);
   dbgif->read(DBG_CAUSE_REG, &cause);
 
   // if there is a breakpoint at this address, let's remove it and single-step over it
+  bool hasStepped = false;
   if (m_bp->at_addr(ppc)) {
     m_bp->disable(ppc);
     dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
     dbgif->write(DBG_CTRL_REG, 0x1); // single-step
     m_bp->enable(ppc);
+    hasStepped = true;
   }
 
-  // clear hit register, has to be done before CTRL
-  dbgif->write(DBG_HIT_REG, 0);
+  if (!step || !hasStepped) {
+    // clear hit register, has to be done before CTRL
+    dbgif->write(DBG_HIT_REG, 0);
 
-  if (step)
-    dbgif->write(DBG_CTRL_REG, 0x1);
-  else
-    dbgif->write(DBG_CTRL_REG, 0);
+    if (step)
+      dbgif->write(DBG_CTRL_REG, 0x1);
+    else
+      dbgif->write(DBG_CTRL_REG, 0);
+  }
 
   fd_set rfds;
   struct timeval tv;
@@ -933,7 +938,6 @@ Rsp::bp_remove(char* data, size_t len) {
 
   if (addr == ppc) {
     dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
-    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
   }
 
   return this->send_str("OK");

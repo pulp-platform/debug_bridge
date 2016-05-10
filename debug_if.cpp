@@ -14,6 +14,14 @@ DbgIF::DbgIF(MemIF* mem, unsigned int base_addr) {
   printf("Found a core with id %X\n", m_thread_id);
 }
 
+void
+DbgIF::flush() {
+  // Write back the value of NPC so that it triggers a flush of the prefetch buffer
+  uint32_t npc;
+  read(DBG_NPC_REG, &npc);
+  write(DBG_NPC_REG, npc);
+}
+
 bool
 DbgIF::write(uint32_t addr, uint32_t wdata) {
   return m_mem->access(1, m_base_addr + addr, 4, (char*)&wdata);

@@ -2,20 +2,24 @@
 #define CACHE_H
 
 #include "mem.h"
+#include "debug_if.h"
+#include <list>
 
 class Cache {
   public:
-    Cache(MemIF* mem) { m_mem = mem; }
+    Cache(MemIF* mem, std::list<DbgIF*>* p_dbgIfList) { m_mem = mem; }
 
-    virtual bool flush() { return true; }
+    virtual bool flush() { flushCores(); return true; }
+    void flushCores();
 
   protected:
     MemIF* m_mem;
+    std::list<DbgIF*>* p_dbgIfList;
 };
 
 class PulpCache : public Cache {
   public:
-    PulpCache(MemIF* mem, unsigned int addr);
+    PulpCache(MemIF* mem, std::list<DbgIF*>* p_dbgIfList, unsigned int addr);
 
     virtual bool flush();
 
@@ -25,7 +29,7 @@ class PulpCache : public Cache {
 
 class GAPCache : public PulpCache {
   public:
-    GAPCache(MemIF* mem, unsigned int addr, unsigned int fc_addr);
+    GAPCache(MemIF* mem, std::list<DbgIF*>* p_dbgIfList, unsigned int addr, unsigned int fc_addr);
 
     virtual bool flush();
 

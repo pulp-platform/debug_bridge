@@ -62,11 +62,32 @@ bool platform_pulpino(MemIF* mem, std::list<DbgIF*>* p_list) {
   return true;
 }
 
-int main() {
+int main(int argc, char **argv) {
   MemIF* mem;
   std::list<DbgIF*> dbgifs;
   Cache* cache;
   Platforms platform = unknown;
+  unsigned int portNumber = 4567;
+
+  int i;
+  for (i=1; i<argc; i++)
+  {
+    if (strcmp(argv[i], "-p") == 0)
+    {
+      i++;
+      if (i >= argc) {
+        fprintf(stderr, "Option -p should take an argument\n");
+        exit(-1);
+      }
+      portNumber = atoi(argv[i]);
+    }
+    else 
+    {
+      fprintf(stderr, "Unknown option: %s\n", argv[i]);
+      exit(-1);
+    }
+  }
+
 
   // initialization
 #ifdef FPGA
@@ -76,7 +97,7 @@ int main() {
   mem = new FpgaIF();
 #endif
 #else
-  mem = new SimIF("localhost", 4567);
+  mem = new SimIF("localhost", portNumber);
 #endif
 
   if (platform == unknown) {
@@ -86,18 +107,18 @@ int main() {
 
   switch(platform) {
     case GAP:
-      cache = new GAPCache(mem, 0x10201400, 0x1B200000);
       platform_gap(mem, &dbgifs);
+      cache = new GAPCache(mem, &dbgifs, 0x10201400, 0x1B200000);
       break;
 
     case PULP:
-      cache = new PulpCache(mem, 0x10201400);
       platform_pulp(mem, &dbgifs);
+      cache = new PulpCache(mem, &dbgifs, 0x10201400);
       break;
 
     case PULPino:
-      cache = new Cache(mem);
       platform_pulpino(mem, &dbgifs);
+      cache = new Cache(mem, &dbgifs);
       break;
 
     default:

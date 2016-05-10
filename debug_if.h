@@ -21,6 +21,8 @@ class DbgIF {
     DbgIF(MemIF* mem, unsigned int base_addr);
     ~DbgIF();
 
+    void flush();
+
     bool halt();
     bool resume(bool step);
     bool is_stopped();
