@@ -4,6 +4,7 @@
 #include "mem.h"
 
 #include <stdint.h>
+#include <list>
 
 class ZynqAPBSPIIF : public MemIF {
   public:
@@ -29,12 +30,22 @@ class ZynqAPBSPIIF : public MemIF {
     void set_clkdiv(uint32_t clkdiv);
     void set_dummycycles(uint32_t dummycycles);
     void qpi_enable(bool enable);
+    bool do_read_check(unsigned int addr, int size);
+
+    bool soft_reset();
+
+
+    struct addr_region {
+      unsigned int start;
+      unsigned int end;
+    };
 
 
     bool m_qpi_enabled;
     volatile uint32_t *m_virt_apbspi;
     volatile uint32_t *m_virt_status;
     int g_mem_dev;
+    std::list<struct addr_region> m_check_addrs;
 };
 
 #endif

@@ -13,7 +13,7 @@
 #define PULP_MEM_BASE    0x51070000
 #define PULP_MEM_SIZE    0x10000
 
-#define SPI_DEFAULT_CLKDIV 4
+#define SPI_DEFAULT_CLKDIV      16
 #define SPI_DEFAULT_DUMMYCYCLES 33
 
 #define SPI_STD     0x0
@@ -75,8 +75,15 @@ ZynqAPBSPIIF::ZynqAPBSPIIF() {
     exit(1);
   }
 
+  soft_reset();
+
   set_clkdiv(SPI_DEFAULT_CLKDIV);
   set_dummycycles(SPI_DEFAULT_DUMMYCYCLES);
+
+  // prepare read check list
+  // the list has to be sorted!
+  m_check_addrs.push_back({0x1C000000, 0x1C03FFFF});
+  m_check_addrs.push_back({0x10000000, 0x1000FFFF});
 
   printf("Zynq APB SPI interface initialized\n");
 }
@@ -183,33 +190,61 @@ ZynqAPBSPIIF::qpi_enable(bool enable) {
 
 bool
 ZynqAPBSPIIF::access(bool write, unsigned int addr, int size, char* buffer) {
-  if (write)
-    return mem_write(addr, size, buffer);
-  else
+  bool retval = true;
+  if (write) {
+    retval = mem_write(addr, size, buffer);
+
+    if (!retval)
+      return false;
+
+    if (do_read_check(addr, size)) {
+      // verify that we have correctly written the buffer to PULP
+      char* buffer_int = (char*)malloc(size);
+      memset(buffer_int, 0, size);
+      retval = mem_read(addr, size, buffer_int);
+
+      if (!retval)
+        return false;
+
+      for(int i = 0; i < size; i++) {
+        if (buffer[i] != buffer_int[i]) {
+          printf("ZynqAPBSPIIF: data written is not what we are reading back: Addr %X, expected %02X, got %02X\n", addr + i, buffer[i], buffer_int[i]);
+          retval = false;
+        }
+      }
+
+      free(buffer_int);
+    }
+
+    return retval;
+  } else {
     return mem_read(addr, size, buffer);
+  }
 }
 
 bool
 ZynqAPBSPIIF::mem_read(unsigned int addr, int len, char *src) {
-  char* buffer = (char*)malloc(len + 8); // +8 to have enough space if both start and end are not aligned
+  char* buffer;
 
   unsigned int addr_int = addr;
   unsigned int len_int  = len;
 
-  while (addr_int % 4 != 0) {
+  while ((addr_int % 4) != 0) {
     addr_int--;
     len_int++;
   }
 
+  // align len_int to be word-aligned
   len_int = len_int + (4 - (len_int % 4));
 
+  buffer  = (char*)malloc(len_int);
 
   // now len_int and addr_int are aligned to words
   // so we can start the burst transfer
   mem_read_words(addr_int, len_int, buffer);
 
   // and after that we just copy our received buffer
-  memcpy(src, buffer + (addr_int - addr), len);
+  memcpy(src, buffer + (addr - addr_int), len);
 
   free(buffer);
 
@@ -221,9 +256,9 @@ ZynqAPBSPIIF::mem_write(unsigned int addr, int len, char *src) {
   char rdata[4];
 
   // first take care of aligning the address
-  if (addr % 4 != 0) {
-    mem_read_words(addr & 0xFFFFFFFC, 4, rdata);
+  if ((addr % 4) != 0) {
     unsigned int addr_int = addr;
+    mem_read_words(addr_int & 0xFFFFFFFC, 4, rdata);
 
     for (int i = addr_int % 4; i < 4 && len >= 0; i++) {
       rdata[i] = *src++;
@@ -244,14 +279,15 @@ ZynqAPBSPIIF::mem_write(unsigned int addr, int len, char *src) {
 
   // now the trailing alignment
   if (len > 0) {
-    mem_read_words(addr & 0xFFFFFFFC, 4, rdata);
     unsigned int addr_int = addr;
+    mem_read_words(addr_int & 0xFFFFFFFC, 4, rdata);
 
     for (int i = 0; i < len; i++) {
       rdata[i] = *src++;
-      len--;
-      addr++;
     }
+
+    addr += len;
+    len   = 0;
 
     mem_write_words(addr_int & 0xFFFFFFFC, 4, rdata);
   }
@@ -263,7 +299,7 @@ ZynqAPBSPIIF::mem_write(unsigned int addr, int len, char *src) {
 // Assumptions: len % 4 == 0 && addr % 4 == 0
 void
 ZynqAPBSPIIF::mem_write_words(unsigned int addr, int len, char *src) {
-  if (len % 4 != 0 || addr % 4 != 0) {
+  if ((len % 4) != 0 || (addr % 4) != 0) {
     printf ("mem_write_words: Illegal input values; not word-aligned\n");
     return;
   }
@@ -273,38 +309,20 @@ ZynqAPBSPIIF::mem_write_words(unsigned int addr, int len, char *src) {
   if (!qpi_was_enabled)
     qpi_enable(true);
 
-  size_t len_rem = len;
   uint32_t* src_int = (uint32_t*)src;
 
   apb_write(SPI_CMD, 0x02000000); // command: TX QPI mode
   apb_write(SPI_ADDR, addr);
   apb_write(SPI_LEN, ((len << 3) << 16) | 0x2008); // write_length (len*8 data bits, 32 addr bits, 8 cmd bits)
 
-  // fill FIFO (before start of transfer)
-  uint32_t len_int = (len < 16) ? len : 16;
-  for(int j = 0; j < (len_int >> 2); j++) {
-    uint32_t status;
-    do {
-      status = apb_read(SPI_STATUS);
-    } while((status >> 24) >= 8);
-
-    apb_write(SPI_TXFIFO, *src_int++);
-  }
-
   // start transfer
   apb_write(SPI_STATUS, (0x1 << 8) | SPI_TRANS_QWR);
 
-  // continue filling FIFO (after start of transfer)
-  if(len > 16) {
-    int count;
-    for(int j = 4; j < (len >> 2); j++) {
-      uint32_t status;
-      do {
-        status = apb_read(SPI_STATUS);
-      } while((status >> 24) >= 8);
+  // continue filling FIFO
+  for(int j = 0; j < (len >> 2); j++) {
+    while(((apb_read(SPI_STATUS) >> 24) & 0xFF) >= 2);
 
-      apb_write(SPI_TXFIFO, *src_int++);
-    }
+    apb_write(SPI_TXFIFO, *src_int++);
   }
 
   // wait for end-of-transfer
@@ -316,7 +334,7 @@ ZynqAPBSPIIF::mem_write_words(unsigned int addr, int len, char *src) {
 
 void
 ZynqAPBSPIIF::mem_read_words(unsigned int addr, int len, char *src) {
-  if (len % 4 != 0 || addr % 4 != 0) {
+  if ((len % 4) != 0 || (addr % 4) != 0) {
     printf ("mem_read_words: Illegal input values; not word-aligned\n");
     return;
   }
@@ -336,15 +354,43 @@ ZynqAPBSPIIF::mem_read_words(unsigned int addr, int len, char *src) {
   // start transfer
   apb_write(SPI_STATUS, (0xf << 8) | SPI_TRANS_QRD);
 
-  // wait for end-of-transfer
-  while((apb_read(SPI_STATUS) & 0xffff) != 1);
-
-  // continuosly empty FIFO (after start of transfer)
+  // continuously empty FIFO (after start of transfer)
   for(int j = 0; j < (len>>2); j++) {
-     while((apb_read(SPI_STATUS) >> 24) >= 8);
+     while(((apb_read(SPI_STATUS) >> 16) & 0xFF) == 0);
      *src_int++ = apb_read(SPI_RXFIFO);
   }
 
   if (!qpi_was_enabled)
     qpi_enable(false);
+}
+
+bool
+ZynqAPBSPIIF::do_read_check(unsigned int addr, int size) {
+  unsigned int addr_start = addr;
+  unsigned int addr_end   = addr + size;
+
+  for (std::list<struct addr_region>::iterator it = m_check_addrs.begin(); it != m_check_addrs.end(); it++) {
+    if ((addr_start <= (*it).end) && (addr_end >= (*it).start)) {
+      // start point and all points in between
+      // we know now that the two regions have an overlap
+
+      // is our given address + size fully within this region?
+      if ((addr_start >= (*it).start) && (addr_end <= (*it).end))
+        return true;
+    }
+
+    if (addr_end > (*it).end) {
+      // end point
+      return false;
+    }
+  }
+
+  return false;
+}
+
+bool
+ZynqAPBSPIIF::soft_reset() {
+  apb_write(SPI_STATUS, 0x10);
+
+  return true;
 }
