@@ -359,7 +359,59 @@ Rsp::v_packet(char* data, size_t len) {
   }
   else if (strncmp ("vCont?", data, strlen ("vCont?")) == 0)
   {
-    return this->send_str("");
+    return this->send_str("OK");
+  }
+  else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
+  {
+    int waitThread = -1;
+    // vCont can contains several commands, handle them in sequence
+    char *str = strtok(&data[6], ";");
+    while(str != NULL) {
+      // Extract command and thread ID
+      char *delim = index(str, ':');
+      int tid = -1;
+      if (delim != NULL) {
+        tid = atoi(delim+1);
+        *delim = 0;
+      }
+
+      if (str[0] == 'C' || str[0] == 'c') {
+
+        if (tid == -1) {
+          this->resumeAll(false);
+        } else {
+          this->resumeCore(this->get_dbgif(tid), false);
+        }
+
+      } else if (str[0] == 'S' || str[0] == 's') {
+
+        if (tid == -1) {
+          this->resumeAll(true);
+        } else {
+          this->resumeCore(this->get_dbgif(tid), true);
+        }
+
+      } else {
+        fprintf(stderr, "Unsupported command in vCont packet: %s\n", str);
+        exit(-1);
+      }
+
+        // Remember on which thread we will wait for the stop
+        // In case we find one command with for threads, we wait for all (-2)
+      if (tid == -1) waitThread = -2;
+        // In case we didn't store yet any thread, store it
+      else if (waitThread == -1) waitThread = tid;
+        // In case we stored a thread id which is different from this one, we will wait for all
+      else if (waitThread != -2 && waitThread != tid) waitThread = -2;
+
+      str = strtok(NULL, ";");
+    }
+    if (waitThread != -1) {
+      if (waitThread == -2) return this->waitStop(NULL);
+      else return this->waitStop(this->get_dbgif(waitThread));
+    } else {
+      return this->send_str("OK");
+    }
   }
 
   fprintf(stderr, "Unknown v packet\n");
@@ -653,6 +705,7 @@ Rsp::send(const char* data, size_t len) {
       // no data available
       continue;
     }
+
   } while (ack != '+');
 
   free(raw);
@@ -698,17 +751,72 @@ Rsp::pc_read(unsigned int* pc) {
 }
 
 bool
-Rsp::resume(bool step) {
+Rsp::waitStop(DbgIF* dbgif) {
   int ret;
   char pkt;
+
+  fd_set rfds;
+  struct timeval tv;
+
+  while(1) {
+
+    //First check if one core has stopped
+    if (dbgif) {
+      if (dbgif->is_stopped()) {
+        return this->signal();
+      }
+    } else {
+      for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+        if ((*it)->is_stopped()) {
+          return this->signal();
+        }
+      }
+    }
+
+    // Otherwise wait for a stop request from gdb side for a while
+
+    FD_ZERO(&rfds);
+    FD_SET(m_socket_client, &rfds);
+
+    tv.tv_sec = 0;
+    tv.tv_usec = 100 * 1000;
+
+    if (select(m_socket_client+1, &rfds, NULL, NULL, &tv)) {
+      ret = recv(m_socket_client, &pkt, 1, 0);
+      if (ret == 1 && pkt == 0x3) {
+        if (dbgif) {
+          dbgif->halt();
+
+          if (!dbgif->is_stopped()) {
+            printf("ERROR: failed to stop core\n");
+            return false;
+          }
+
+          return this->signal();
+        } else {          
+          for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+            (*it)->halt();
+
+            if (!(*it)->is_stopped()) {
+              printf("ERROR: failed to stop core\n");
+              return false;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+void
+Rsp::resumeCore(DbgIF* dbgif, bool step) {
   uint32_t hit;
   uint32_t cause;
   uint32_t ppc;
   uint32_t npc;
   uint32_t data;
-  DbgIF* dbgif;
-
-  dbgif = this->get_dbgif(m_thread_sel);
 
   // now let's handle software breakpoints
 
@@ -737,38 +845,35 @@ Rsp::resume(bool step) {
       dbgif->write(DBG_CTRL_REG, 0);
   }
 
-  fd_set rfds;
-  struct timeval tv;
+}
 
-
-  while(1) {
-    FD_ZERO(&rfds);
-    FD_SET(m_socket_client, &rfds);
-
-    tv.tv_sec = 0;
-    tv.tv_usec = 100 * 1000;
-
-    if (select(m_socket_client+1, &rfds, NULL, NULL, &tv) == 0) {
-      if (dbgif->is_stopped()) {
-        return this->signal();
-      }
-    } else {
-      ret = recv(m_socket_client, &pkt, 1, 0);
-      if (ret == 1 && pkt == 0x3) {
-        printf("Stopping core\n");
-        dbgif->halt();
-
-        if (!dbgif->is_stopped()) {
-          printf("ERROR: failed to stop core\n");
-          return false;
-        }
-
-        return this->signal();
-      }
-    }
+void
+Rsp::resumeAll(bool step) {  
+  for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+    resumeCore(*it, step);
   }
+}
 
-  return true;
+bool
+Rsp::resume(bool step) {
+  int ret;
+  char pkt;
+  DbgIF *dbgif = this->get_dbgif(m_thread_sel);
+
+  resumeCore(dbgif, step);
+
+  return waitStop(dbgif);
+}
+
+bool
+Rsp::resume(int tid, bool step) {
+  int ret;
+  char pkt;
+  DbgIF *dbgif = this->get_dbgif(tid);
+
+  resumeCore(dbgif, step);
+
+  return waitStop(dbgif);
 }
 
 bool

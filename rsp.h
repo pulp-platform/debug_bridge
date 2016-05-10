@@ -52,7 +52,11 @@ class Rsp {
     // internal helper functions
     bool pc_read(unsigned int* pc);
 
+    bool waitStop(DbgIF* dbgif);
     bool resume(bool step);
+    bool resume(int tid, bool step);
+    void resumeAll(bool step);
+    void resumeCore(DbgIF* dbgif, bool step);
 
     bool mem_read(char* data, size_t len);
     bool mem_write_ascii(char* data, size_t len);

@@ -27,12 +27,13 @@ endif
 clean:
 	rm -f ./*.o
 	rm -f ./debug_bridge
+	rm -f ./libdebugbridge.so
 
 debug_bridge: $(EXE_SRCS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 libdebugbridge.so: $(LIB_SRCS)
-	$(CXX) $(CXXFLAGS) -fPIC -shared -o $@ $^
+	$(CXX) $(CXXFLAGS) -g -O3 -fPIC -shared -o $@ $^
 
 ifdef fpga
 push: debug_bridge
