@@ -1,4 +1,5 @@
 #include "bridge.h"
+#include <stdarg.h>
 
 Platforms platform_detect(MemIF* mem) {
   uint32_t info;
@@ -22,7 +23,7 @@ Platforms platform_detect(MemIF* mem) {
   }
 }
 
-bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list) {
+bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list, LogIF *log) {
   uint32_t info;
   unsigned int ncores;
 
@@ -31,7 +32,7 @@ bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list) {
   ncores = info >> 16;
 
   for(int i = 0; i < ncores; i++) {
-    p_list->push_back(new DbgIF(mem, 0x10300000 + i * 0x8000));
+    p_list->push_back(new DbgIF(mem, 0x10300000 + i * 0x8000, log));
   }
 
   // set all-stop mode, so that all cores go to debug when one enters debug mode
@@ -39,30 +40,32 @@ bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list) {
   return mem->access(1, 0x10200038, 4, (char*)&info);
 }
 
-bool platform_gap(MemIF* mem, std::list<DbgIF*>* p_list) {
-  platform_pulp(mem, p_list);
-  p_list->push_back(new DbgIF(mem, 0x1B220000));
+bool platform_gap(MemIF* mem, std::list<DbgIF*>* p_list, LogIF *log) {
+  platform_pulp(mem, p_list, log);
+  p_list->push_back(new DbgIF(mem, 0x1B220000, log));
 
   return true;
 }
 
-bool platform_pulpino(MemIF* mem, std::list<DbgIF*>* p_list) {
-  p_list->push_back(new DbgIF(mem, 0x1A110000));
+bool platform_pulpino(MemIF* mem, std::list<DbgIF*>* p_list, LogIF *log) {
+  p_list->push_back(new DbgIF(mem, 0x1A110000, log));
 
   return true;
 }
 
-Bridge::Bridge(Platforms platform, int portNumber) {
-	initBridge(platform, portNumber, NULL);
+Bridge::Bridge(Platforms platform, int portNumber, LogIF *log) {
+	initBridge(platform, portNumber, NULL, log);
 }
 
-Bridge::Bridge(Platforms platform, MemIF *memIF) {
-	initBridge(platform, -1, memIF);
+Bridge::Bridge(Platforms platform, MemIF *memIF, LogIF *log) {
+	initBridge(platform, -1, memIF, log);
 }
 
-void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF) {
+void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF, LogIF *log) {
 
   // initialization
+  this->log = log;
+
 #ifdef FPGA
 #ifdef PULPEMU
   mem = new ZynqAPBSPIIF();
@@ -85,17 +88,17 @@ void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF) {
 
   switch(platform) {
     case GAP:
-      platform_gap(mem, &dbgifs);
+      platform_gap(mem, &dbgifs, log);
       cache = new GAPCache(mem, &dbgifs, 0x10201400, 0x1B200000);
       break;
 
     case PULP:
-      platform_pulp(mem, &dbgifs);
+      platform_pulp(mem, &dbgifs, log);
       cache = new PulpCache(mem, &dbgifs, 0x10201400);
       break;
 
     case PULPino:
-      platform_pulpino(mem, &dbgifs);
+      platform_pulpino(mem, &dbgifs, log);
       cache = new Cache(mem, &dbgifs);
       break;
 
@@ -106,7 +109,7 @@ void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF) {
 
   bp = new BreakPoints(mem, cache);
 
-  rsp = new Rsp(1234, mem, dbgifs, bp);
+  rsp = new Rsp(1234, mem, log, dbgifs, bp);
 }
 
 void Bridge::mainLoop()
@@ -134,3 +137,20 @@ Bridge::~Bridge()
   delete mem;
 }
 
+void Bridge::user(char *str, ...)
+{
+  va_list va;
+  va_start(va, str);
+  vprintf(str, va);
+  va_end(va);
+  printf("%s", str);
+}
+
+void Bridge::debug(char *str, ...)
+{
+  va_list va;
+  va_start(va, str);
+  vprintf(str, va);
+  va_end(va);
+  printf("%s", str);
+}

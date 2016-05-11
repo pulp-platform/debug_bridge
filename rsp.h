@@ -20,7 +20,7 @@
 
 class Rsp {
   public:
-    Rsp(int socket_port, MemIF* mem, std::list<DbgIF*> list_dbgif, BreakPoints* bp);
+    Rsp(int socket_port, MemIF* mem, LogIF *log, std::list<DbgIF*> list_dbgif, BreakPoints* bp);
 
     bool open();
     void close();
@@ -73,6 +73,7 @@ class Rsp {
 
     int m_thread_sel;
     MemIF* m_mem;
+    LogIF *log;
     BreakPoints* m_bp;
     std::list<DbgIF*> m_dbgifs;
 };

@@ -4,14 +4,15 @@
 
 #include <stdio.h>
 
-DbgIF::DbgIF(MemIF* mem, unsigned int base_addr) {
+DbgIF::DbgIF(MemIF* mem, unsigned int base_addr, LogIF *log) {
   this->m_mem = mem;
   this->m_base_addr = base_addr;
+  this->log = log;
 
   // let's discover core id and cluster id
   this->halt();
   this->csr_read(0xF10, &m_thread_id);
-  printf("Found a core with id %X\n", m_thread_id);
+  log->debug("Found a core with id %X\n", m_thread_id);
 }
 
 void

@@ -25,11 +25,12 @@ enum target_signal {
 
 #define PACKET_MAX_LEN 4096
 
-Rsp::Rsp(int socket_port, MemIF* mem, std::list<DbgIF*> list_dbgif, BreakPoints* bp) {
+Rsp::Rsp(int socket_port, MemIF* mem, LogIF *log, std::list<DbgIF*> list_dbgif, BreakPoints* bp) {
   m_socket_port = socket_port;
   m_mem = mem;
   m_dbgifs = list_dbgif;
   m_bp = bp;
+  this->log = log;
 
   // select one dbg if at random
   if (m_dbgifs.size() == 0) {
@@ -72,7 +73,7 @@ Rsp::open() {
     return false;
   }
 
-  fprintf(stderr, "Listening on port %d\n", m_socket_port);
+  fprintf(stderr, "Debug bridge listening on port %d\n", m_socket_port);
 
   // now clear resources
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
@@ -98,7 +99,7 @@ Rsp::wait_client() {
     return false;
   }
 
-  printf("RSP: Client connected!\n");
+  log->debug("RSP: Client connected!\n");
   return true;
 }
 
@@ -111,7 +112,7 @@ Rsp::loop() {
   struct timeval tv;
 
   while (this->get_packet(pkt, &len)) {
-    printf("Received $%.*s\n", len, pkt);
+    log->debug("Received $%.*s\n", len, pkt);
     if (!this->decode(pkt, len))
       return false;
   }
@@ -122,7 +123,7 @@ Rsp::loop() {
 bool
 Rsp::decode(char* data, size_t len) {
   if (data[0] == 0x03) {
-    printf ("Received break\n");
+    log->debug ("Received break\n");
     return this->signal();
   }
 
@@ -364,6 +365,8 @@ Rsp::v_packet(char* data, size_t len) {
   else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
   {
     int waitThread = -1;
+    bool threadsCmd[m_dbgifs.size()];
+    for (int i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
     // vCont can contains several commands, handle them in sequence
     char *str = strtok(&data[6], ";");
     while(str != NULL) {
@@ -375,25 +378,30 @@ Rsp::v_packet(char* data, size_t len) {
         *delim = 0;
       }
 
+      bool cont = false;
+      bool step = false;
+
       if (str[0] == 'C' || str[0] == 'c') {
-
-        if (tid == -1) {
-          this->resumeAll(false);
-        } else {
-          this->resumeCore(this->get_dbgif(tid), false);
-        }
-
+        cont = true;
+        step = false;
       } else if (str[0] == 'S' || str[0] == 's') {
-
-        if (tid == -1) {
-          this->resumeAll(true);
-        } else {
-          this->resumeCore(this->get_dbgif(tid), true);
-        }
-
+        cont = true;
+        step = true;
       } else {
         fprintf(stderr, "Unsupported command in vCont packet: %s\n", str);
         exit(-1);
+      }
+
+      if (cont) {
+        if (tid == -1) {
+          for (int i=0; i<m_dbgifs.size(); i++) {
+            if (!threadsCmd[i]) resumeCore(this->get_dbgif(i), step);
+            threadsCmd[i] = true;
+          }
+        } else {
+          this->resumeCore(this->get_dbgif(tid), step);
+          threadsCmd[tid] = true;
+        }
       }
 
         // Remember on which thread we will wait for the stop
@@ -686,7 +694,7 @@ Rsp::send(const char* data, size_t len) {
 
   char ack;
   do {
-    printf("Sending %.*s\n", raw_len, raw);
+    log->debug("Sending %.*s\n", raw_len, raw);
 
     if (::send(m_socket_client, raw, raw_len, 0) != raw_len) {
       free(raw);

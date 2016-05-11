@@ -2,6 +2,7 @@
 #define DEBUG_IF_H
 
 #include "mem.h"
+#include "log.h"
 
 #include <unistd.h>
 #include <stdint.h>
@@ -18,7 +19,7 @@
 
 class DbgIF {
   public:
-    DbgIF(MemIF* mem, unsigned int base_addr);
+    DbgIF(MemIF* mem, unsigned int base_addr, LogIF *log);
 
     void flush();
 
@@ -46,6 +47,7 @@ class DbgIF {
     unsigned int m_thread_id;
 
     MemIF* m_mem;
+    LogIF *log;
 };
 
 #endif
