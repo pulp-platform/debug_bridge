@@ -214,6 +214,8 @@ Rsp::cont(char* data, size_t len) {
       dbgif->write(DBG_NPC_REG, addr);
   }
 
+  m_thread_sel = 0;
+
   return this->resume(false);
 }
 
@@ -242,6 +244,8 @@ Rsp::step(char* data, size_t len) {
     if (npc != addr)
       dbgif->write(DBG_NPC_REG, addr);
   }
+
+  m_thread_sel = 0;
 
   return this->resume(true);
 }
@@ -360,15 +364,14 @@ Rsp::v_packet(char* data, size_t len) {
   }
   else if (strncmp ("vCont?", data, strlen ("vCont?")) == 0)
   {
-    return this->send_str("OK");
+    return this->send_str("");
   }
   else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
   {
-    int waitThread = -1;
     bool threadsCmd[m_dbgifs.size()];
     for (int i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
     // vCont can contains several commands, handle them in sequence
-    char *str = strtok(&data[6], ";");
+      char *str = strtok(&data[6], ";");
     while(str != NULL) {
       // Extract command and thread ID
       char *delim = index(str, ':');
@@ -395,31 +398,20 @@ Rsp::v_packet(char* data, size_t len) {
       if (cont) {
         if (tid == -1) {
           for (int i=0; i<m_dbgifs.size(); i++) {
-            if (!threadsCmd[i]) resumeCore(this->get_dbgif(i), step);
-            threadsCmd[i] = true;
+            if (!threadsCmd[i]) resumeCoresPrepare(this->get_dbgif(i), step);
           }
         } else {
-          this->resumeCore(this->get_dbgif(tid), step);
+          if (!threadsCmd[tid]) this->resumeCoresPrepare(this->get_dbgif(tid), step);
           threadsCmd[tid] = true;
         }
       }
 
-        // Remember on which thread we will wait for the stop
-        // In case we find one command with for threads, we wait for all (-2)
-      if (tid == -1) waitThread = -2;
-        // In case we didn't store yet any thread, store it
-      else if (waitThread == -1) waitThread = tid;
-        // In case we stored a thread id which is different from this one, we will wait for all
-      else if (waitThread != -2 && waitThread != tid) waitThread = -2;
-
       str = strtok(NULL, ";");
     }
-    if (waitThread != -1) {
-      if (waitThread == -2) return this->waitStop(NULL);
-      else return this->waitStop(this->get_dbgif(waitThread));
-    } else {
-      return this->send_str("OK");
-    }
+
+    this->resumeCores();
+
+    return this->waitStop(NULL);
   }
 
   fprintf(stderr, "Unknown v packet\n");
@@ -654,7 +646,7 @@ Rsp::signal() {
   }
 
   len = snprintf(str, 4, "S%02x", signal);
-
+  
   return this->send(str, len);
 }
 
@@ -835,6 +827,7 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
 
   // if there is a breakpoint at this address, let's remove it and single-step over it
   bool hasStepped = false;
+
   if (m_bp->at_addr(ppc)) {
     m_bp->disable(ppc);
     dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
@@ -856,6 +849,65 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
 }
 
 void
+Rsp::resumeCoresPrepare(DbgIF *dbgif, bool step) {
+
+  uint32_t hit;
+  uint32_t cause;
+  uint32_t ppc;
+  uint32_t npc;
+  uint32_t data;
+
+  // now let's handle software breakpoints
+
+  dbgif->read(DBG_PPC_REG, &ppc);
+  dbgif->read(DBG_NPC_REG, &npc);
+  dbgif->read(DBG_HIT_REG, &hit);
+  dbgif->read(DBG_CAUSE_REG, &cause);
+
+  // if there is a breakpoint at this address, let's remove it and single-step over it
+  bool hasStepped = false;
+
+  log->debug("Preparing core to resume (step: %d, ppc: 0x%x)\n", step, ppc);
+
+  if (m_bp->at_addr(ppc)) {
+    log->debug("Core is stopped on a breakpoint, stepping to go over (addr: 0x%x)\n", ppc);;
+
+    m_bp->disable(ppc);
+    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
+    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
+    while (1) {
+      uint32_t value;
+      dbgif->read(DBG_CTRL_REG, &value);
+      if ((value >> 16) & 1) break;
+    }
+    m_bp->enable(ppc);
+    hasStepped = true;
+  }
+
+  if (!step || !hasStepped) {
+    // clear hit register, has to be done before CTRL
+    dbgif->write(DBG_HIT_REG, 0);
+
+    if (step)
+      dbgif->write(DBG_CTRL_REG, (1<<16) | 0x1);
+    else
+      dbgif->write(DBG_CTRL_REG, (1<<16) | 0);
+  }
+}
+
+void
+Rsp::resumeCores() {
+  if (m_dbgifs.size() == 1) {
+    uint32_t value;
+    this->get_dbgif(0)->read(DBG_CTRL_REG, &value);
+    this->get_dbgif(0)->write(DBG_CTRL_REG, value & ~(1<<16));
+  } else {
+    uint32_t info = 0xFFFFFFFF;
+    m_mem->access(1, 0x1020003c, 4, (char*)&info);
+  }
+}
+
+void
 Rsp::resumeAll(bool step) {  
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
     resumeCore(*it, step);
@@ -864,13 +916,21 @@ Rsp::resumeAll(bool step) {
 
 bool
 Rsp::resume(bool step) {
-  int ret;
-  char pkt;
-  DbgIF *dbgif = this->get_dbgif(m_thread_sel);
+  if (m_dbgifs.size() == 1) {
+    int ret;
+    char pkt;
+    DbgIF *dbgif = this->get_dbgif(m_thread_sel);
 
-  resumeCore(dbgif, step);
+    resumeCore(dbgif, step);
 
-  return waitStop(dbgif);
+    return waitStop(dbgif);
+  } else {
+    for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
+      resumeCoresPrepare(*it, step);
+    }
+    resumeCores();
+    return waitStop(NULL);
+  }
 }
 
 bool

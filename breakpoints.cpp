@@ -39,6 +39,7 @@ BreakPoints::insert(unsigned int addr) {
 
 bool
 BreakPoints::remove(unsigned int addr) {
+
   bool retval;
   bool is_compressed;
   uint32_t data;
@@ -63,6 +64,7 @@ BreakPoints::remove(unsigned int addr) {
 
 bool
 BreakPoints::clear() {
+
   bool retval = this->disable_all();
 
   m_bp_list.clear();

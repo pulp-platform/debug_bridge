@@ -57,6 +57,8 @@ class Rsp {
     bool resume(int tid, bool step);
     void resumeAll(bool step);
     void resumeCore(DbgIF* dbgif, bool step);
+    void resumeCoresPrepare(DbgIF *dbgif, bool step);
+    void resumeCores();
 
     bool mem_read(char* data, size_t len);
     bool mem_write_ascii(char* data, size_t len);
