@@ -47,7 +47,8 @@ endif
 
 sdk:
 	make clean all GEN_LIB=1
-	mkdir -p $(PULP_SDK_HOME)/install/ws/bin
+	mkdir -p $(PULP_SDK_HOME)/install/ws/lib
+	mkdir -p $(PULP_SDK_HOME)/install/ws/include
 	cp *.h $(PULP_SDK_HOME)/install/ws/include
 	cp debug_bridge $(PULP_SDK_HOME)/install/ws/bin
 	cp libdebugbridge.so $(PULP_SDK_HOME)/install/ws/lib
