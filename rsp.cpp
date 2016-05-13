@@ -870,7 +870,7 @@ Rsp::resumeCoresPrepare(DbgIF *dbgif, bool step) {
   log->debug("Preparing core to resume (step: %d, ppc: 0x%x)\n", step, ppc);
 
   if (m_bp->at_addr(ppc)) {
-    log->debug("Core is stopped on a breakpoint, stepping to go over (addr: 0x%x)\n", ppc);;
+    log->debug("Core is stopped on a breakpoint, stepping to go over (addr: 0x%x)\n", ppc);
 
     m_bp->disable(ppc);
     dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction

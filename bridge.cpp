@@ -54,17 +54,20 @@ bool platform_pulpino(MemIF* mem, std::list<DbgIF*>* p_list, LogIF *log) {
 }
 
 Bridge::Bridge(Platforms platform, int portNumber, LogIF *log) {
-	initBridge(platform, portNumber, NULL, log);
+  initBridge(platform, portNumber, NULL, log);
 }
 
 Bridge::Bridge(Platforms platform, MemIF *memIF, LogIF *log) {
-	initBridge(platform, -1, memIF, log);
+  initBridge(platform, -1, memIF, log);
 }
 
 void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF, LogIF *log) {
 
   // initialization
-  this->log = log;
+  if (log == NULL)
+    this->log = this;
+  else
+    this->log = log;
 
 #ifdef FPGA
 #ifdef PULPEMU
@@ -76,8 +79,8 @@ void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF, LogIF 
   if (portNumber != -1) mem = new SimIF("localhost", portNumber);
   else if (memIF != NULL) mem = memIF;
   else {
-  	fprintf(stderr, "Either a memory interface or a port number must be provided\n");
-  	exit (-1);
+    fprintf(stderr, "Either a memory interface or a port number must be provided\n");
+    exit (-1);
   }
 #endif
 
@@ -88,17 +91,17 @@ void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF, LogIF 
 
   switch(platform) {
     case GAP:
-      platform_gap(mem, &dbgifs, log);
+      platform_gap(mem, &dbgifs, this->log);
       cache = new GAPCache(mem, &dbgifs, 0x10201400, 0x1B200000);
       break;
 
     case PULP:
-      platform_pulp(mem, &dbgifs, log);
+      platform_pulp(mem, &dbgifs, this->log);
       cache = new PulpCache(mem, &dbgifs, 0x10201400);
       break;
 
     case PULPino:
-      platform_pulpino(mem, &dbgifs, log);
+      platform_pulpino(mem, &dbgifs, this->log);
       cache = new Cache(mem, &dbgifs);
       break;
 
@@ -109,7 +112,7 @@ void Bridge::initBridge(Platforms platform, int portNumber, MemIF *memIF, LogIF 
 
   bp = new BreakPoints(mem, cache);
 
-  rsp = new Rsp(1234, mem, log, dbgifs, bp);
+  rsp = new Rsp(1234, mem, this->log, dbgifs, bp);
 }
 
 void Bridge::mainLoop()
@@ -143,7 +146,6 @@ void Bridge::user(char *str, ...)
   va_start(va, str);
   vprintf(str, va);
   va_end(va);
-  printf("%s", str);
 }
 
 void Bridge::debug(char *str, ...)
@@ -152,5 +154,4 @@ void Bridge::debug(char *str, ...)
   va_start(va, str);
   vprintf(str, va);
   va_end(va);
-  printf("%s", str);
 }

@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++11
+CXXFLAGS=-std=c++0x -g
 SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp
 
 CXX=g++
@@ -40,7 +40,7 @@ debug_bridge: $(EXE_SRCS)
 libdebugbridge.so: $(LIB_SRCS)
 	$(CXX) $(CXXFLAGS) -g -O3 -fPIC -shared -o $@ $^
 
-ifdef fpga
+ifdef pulpino
 push: debug_bridge
 	scp ./debug_bridge $(FPGA_HOSTNAME):/root/
 endif

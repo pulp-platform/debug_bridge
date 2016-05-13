@@ -205,5 +205,5 @@ FpgaIF::access(bool write, unsigned int addr, int size, char* buffer) {
     }
   }
 
-  return true;
+  return retval;
 }

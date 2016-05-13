@@ -15,14 +15,14 @@ int main(int argc, char **argv) {
       }
       portNumber = atoi(argv[i]);
     }
-    else 
+    else
     {
       fprintf(stderr, "Unknown option: %s\n", argv[i]);
       exit(-1);
     }
   }
 
-  Bridge *bridge = new Bridge(PULP, portNumber);
+  Bridge *bridge = new Bridge(unknown, portNumber);
   bridge->mainLoop();
   delete bridge;
 
