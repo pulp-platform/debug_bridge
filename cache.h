@@ -7,7 +7,7 @@
 
 class Cache {
   public:
-    Cache(MemIF* mem, std::list<DbgIF*>* p_dbgIfList) { m_mem = mem; }
+    Cache(MemIF* mem, std::list<DbgIF*>* dbgIfList) { m_mem = mem; p_dbgIfList = dbgIfList; }
 
     virtual bool flush() { flushCores(); return true; }
     void flushCores();
