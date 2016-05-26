@@ -903,7 +903,7 @@ Rsp::resumeCores() {
     this->get_dbgif(0)->write(DBG_CTRL_REG, value & ~(1<<16));
   } else {
     uint32_t info = 0xFFFFFFFF;
-    m_mem->access(1, 0x1020003c, 4, (char*)&info);
+    m_mem->access(1, 0x10200028, 4, (char*)&info);
   }
 }
 
