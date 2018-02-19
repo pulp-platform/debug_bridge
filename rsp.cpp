@@ -978,7 +978,7 @@ Rsp::mem_write_ascii(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%d:", &addr, &length) != 2) {
+  if (sscanf(data, "%x,%ld:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1038,7 +1038,7 @@ Rsp::mem_write(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%x:", &addr, &length) != 2) {
+  if (sscanf(data, "%x,%lx:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
