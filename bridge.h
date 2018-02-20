@@ -21,8 +21,8 @@ class Bridge : public LogIF {
     ~Bridge();
     void mainLoop();
 
-    void user(char *str, ...);
-    void debug(char *str, ...);
+    void user(const char *str, ...);
+    void debug(const char *str, ...);
 
   private:
   MemIF* mem;

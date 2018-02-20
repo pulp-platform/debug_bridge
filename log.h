@@ -3,8 +3,8 @@
 
 class LogIF {
   public:
-    virtual void user(char *str, ...) = 0;
-    virtual void debug(char *str, ...) = 0;
+    virtual void user(const char *str, ...) = 0;
+    virtual void debug(const char *str, ...) = 0;
 };
 
 #endif
