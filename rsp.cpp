@@ -362,9 +362,11 @@ Rsp::v_packet(char* data, size_t len) {
   else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
   {
     bool threadsCmd[m_dbgifs.size()];
-    for (std::size_t i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
+    for (std::size_t i=0; i<m_dbgifs.size(); i++) 
+      threadsCmd[i] = false;
+
     // vCont can contains several commands, handle them in sequence
-      char *str = strtok(&data[6], ";");
+    char *str = strtok(&data[6], ";");
     while(str != NULL) {
       // Extract command and thread ID
       char *delim = index(str, ':');
