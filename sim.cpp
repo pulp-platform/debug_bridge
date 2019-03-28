@@ -87,9 +87,7 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    uint8_t ok    = *((uint8_t*)&data[0]);
-    uint32_t size = *((uint32_t*)&data[1]);
-
+    uint8_t ok = *((uint8_t*)&data[0]);
     if (ok == -1) {
       fprintf(stderr, "Write failed on simulator\n");
       return false;
@@ -102,8 +100,8 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    uint8_t ok    = *((uint8_t*)&data[0]);
     uint32_t size = *((uint32_t*)&data[1]);
+    uint8_t ok    = data[0];
 
     if (ok == -1) {
       fprintf(stderr, "Read failed on simulator\n");
@@ -116,7 +114,7 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    if (ret != size) {
+    if ((uint32_t)ret != size) {
       fprintf(stderr, "Unable to get all data only get %d from %d\n", ret, size);
       return false;
     }

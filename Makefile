@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++0x -g
+CXXFLAGS=-std=c++0x -g -Wall
 SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp
 
 CXX=g++

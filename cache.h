@@ -8,6 +8,7 @@
 class Cache {
   public:
     Cache(MemIF* mem, std::list<DbgIF*>* dbgIfList) { m_mem = mem; p_dbgIfList = dbgIfList; }
+    virtual ~Cache(){};
 
     virtual bool flush() { flushCores(); return true; }
     void flushCores();

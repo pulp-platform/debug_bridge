@@ -67,7 +67,7 @@ class Rsp {
     bool bp_insert(char* data, size_t len);
     bool bp_remove(char* data, size_t len);
 
-    DbgIF* get_dbgif(int thread_id);
+    DbgIF* get_dbgif(unsigned int thread_id);
 
     int m_socket_port;
     int m_socket_in;

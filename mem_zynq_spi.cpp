@@ -64,7 +64,6 @@ bool
 FpgaIF::mem_read(uint32_t addr, uint32_t *rdata) {
   char wr_buf[256];
   char rd_buf[256];
-  int i;
 
   struct spi_ioc_transfer* transfer = (struct spi_ioc_transfer*)malloc(sizeof(struct spi_ioc_transfer));
 
@@ -91,7 +90,7 @@ FpgaIF::mem_read(uint32_t addr, uint32_t *rdata) {
   }
 
   // shift everything by one bit
-  for(i = 0; i < transfer->len-1; i++) {
+  for(unsigned int i = 0; i < transfer->len-1; i++) {
     rd_buf[i] = (rd_buf[i] << 1) | ((rd_buf[i+1] & 0x80) >> 7);
   }
 

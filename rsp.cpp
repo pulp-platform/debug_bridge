@@ -108,9 +108,6 @@ Rsp::loop() {
   char pkt[PACKET_MAX_LEN];
   size_t len;
 
-  fd_set rfds;
-  struct timeval tv;
-
   while (this->get_packet(pkt, &len)) {
     log->debug("Received $%.*s\n", len, pkt);
     if (!this->decode(pkt, len))
@@ -194,7 +191,6 @@ Rsp::cont(char* data, size_t len) {
   uint32_t sig;
   uint32_t addr;
   uint32_t npc;
-  int i;
   bool npc_found = false;
   DbgIF* dbgif;
 
@@ -225,12 +221,11 @@ bool
 Rsp::step(char* data, size_t len) {
   uint32_t addr;
   uint32_t npc;
-  int i;
   DbgIF* dbgif;
 
   // strip signal first
   if (data[0] == 'S') {
-    for (i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
       if (data[i] == ';') {
         data = &data[i+1];
         break;
@@ -324,7 +319,7 @@ Rsp::query(char* data, size_t len) {
       strcpy(str, str_default);
 
     ret = 0;
-    for(int i = 0; i < strlen(str); i++)
+    for(size_t i = 0; i < strlen(str); i++)
       ret += snprintf(&reply[ret], 256 - ret, "%02X", str[i]);
 
     return this->send(reply, ret);
@@ -367,7 +362,7 @@ Rsp::v_packet(char* data, size_t len) {
   else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
   {
     bool threadsCmd[m_dbgifs.size()];
-    for (int i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
+    for (std::size_t i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
     // vCont can contains several commands, handle them in sequence
       char *str = strtok(&data[6], ";");
     while(str != NULL) {
@@ -395,7 +390,7 @@ Rsp::v_packet(char* data, size_t len) {
 
       if (cont) {
         if (tid == -1) {
-          for (int i=0; i<m_dbgifs.size(); i++) {
+          for (std::size_t i=0; i<m_dbgifs.size(); i++) {
             if (!threadsCmd[i]) resumeCoresPrepare(this->get_dbgif(i), step);
           }
         } else {
@@ -423,7 +418,6 @@ bool
 Rsp::regs_send() {
   uint32_t gpr[32];
   uint32_t npc;
-  uint32_t ppc;
   char regs_str[512];
   int i;
 
@@ -468,7 +462,6 @@ bool
 Rsp::reg_write(char* data, size_t len) {
   uint32_t addr;
   uint32_t wdata;
-  char data_str[10];
   DbgIF* dbgif;
 
   if (sscanf(data, "%x=%08x", &addr, &wdata) != 2) {
@@ -653,14 +646,13 @@ Rsp::signal() {
 bool
 Rsp::send(const char* data, size_t len) {
   int ret;
-  int i;
   size_t raw_len = 0;
   char* raw = (char*)malloc(len * 2 + 4);
   unsigned int checksum = 0;
 
   raw[raw_len++] = '$';
 
-  for (i = 0; i < len; i++) {
+  for (size_t i = 0; i < len; i++) {
     char c = data[i];
 
     // check if escaping needed
@@ -688,7 +680,7 @@ Rsp::send(const char* data, size_t len) {
   do {
     log->debug("Sending %.*s\n", raw_len, raw);
 
-    if (::send(m_socket_client, raw, raw_len, 0) != raw_len) {
+    if ((size_t)::send(m_socket_client, raw, raw_len, 0) != raw_len) {
       free(raw);
       fprintf(stderr, "Unable to send data to client\n");
       return false;
@@ -816,7 +808,6 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
   uint32_t cause;
   uint32_t ppc;
   uint32_t npc;
-  uint32_t data;
 
   // now let's handle software breakpoints
 
@@ -855,7 +846,6 @@ Rsp::resumeCoresPrepare(DbgIF *dbgif, bool step) {
   uint32_t cause;
   uint32_t ppc;
   uint32_t npc;
-  uint32_t data;
 
   // now let's handle software breakpoints
 
@@ -917,8 +907,6 @@ Rsp::resumeAll(bool step) {
 bool
 Rsp::resume(bool step) {
   if (m_dbgifs.size() == 1) {
-    int ret;
-    char pkt;
     DbgIF *dbgif = this->get_dbgif(m_thread_sel);
 
     resumeCore(dbgif, step);
@@ -935,8 +923,6 @@ Rsp::resume(bool step) {
 
 bool
 Rsp::resume(int tid, bool step) {
-  int ret;
-  char pkt;
   DbgIF *dbgif = this->get_dbgif(tid);
 
   resumeCore(dbgif, step);
@@ -949,9 +935,8 @@ Rsp::mem_read(char* data, size_t len) {
   char buffer[512];
   char reply[512];
   uint32_t addr;
-  uint32_t length;
+  unsigned int length;
   uint32_t rdata;
-  int i;
 
   if (sscanf(data, "%x,%x", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
@@ -960,7 +945,7 @@ Rsp::mem_read(char* data, size_t len) {
 
   m_mem->access(0, addr, length, buffer);
 
-  for(i = 0; i < length; i++) {
+  for(unsigned int i = 0; i < length; i++) {
     rdata = buffer[i];
     snprintf(&reply[i * 2], 3, "%02x", rdata);
   }
@@ -973,7 +958,7 @@ Rsp::mem_write_ascii(char* data, size_t len) {
   uint32_t addr;
   size_t length;
   uint32_t wdata;
-  int i, j;
+  unsigned int i, j;
 
   char* buffer;
   int buffer_len;
@@ -1032,11 +1017,7 @@ bool
 Rsp::mem_write(char* data, size_t len) {
   uint32_t addr;
   size_t length;
-  uint32_t wdata;
-  int i, j;
-
-  char* buffer;
-  int buffer_len;
+  unsigned int i;
 
   if (sscanf(data, "%x,%lx:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
@@ -1065,7 +1046,6 @@ bool
 Rsp::bp_insert(char* data, size_t len) {
   enum mp_type type;
   uint32_t addr;
-  uint32_t data_bp;
   int bp_len;
 
   if (3 != sscanf(data, "Z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
@@ -1120,7 +1100,7 @@ Rsp::bp_remove(char* data, size_t len) {
 }
 
 DbgIF*
-Rsp::get_dbgif(int thread_id) {
+Rsp::get_dbgif(unsigned int thread_id) {
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
     if ((*it)->get_thread_id() == thread_id)
       return *it;
