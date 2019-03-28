@@ -1,4 +1,4 @@
-
+#include <inttypes.h>
 #include "rsp.h"
 
 enum mp_type {
@@ -196,10 +196,10 @@ Rsp::cont(char* data, size_t len) {
 
   // strip signal first
   if (data[0] == 'C') {
-    if (sscanf(data, "C%X;%X", &sig, &addr) == 2)
+    if (sscanf(data, "C%" SCNx32 ";%" SCNx32 "", &sig, &addr) == 2)
       npc_found = true;
   } else {
-    if (sscanf(data, "c%X", &addr) == 1)
+    if (sscanf(data, "c%" SCNx32 "", &addr) == 1)
       npc_found = true;
   }
 
@@ -233,7 +233,7 @@ Rsp::step(char* data, size_t len) {
     }
   }
 
-  if (sscanf(data, "%x", &addr) == 1) {
+  if (sscanf(data, "%" SCNx32, &addr) == 1) {
     dbgif = this->get_dbgif(m_thread_sel);
     // only when we have received an address
     dbgif->read(DBG_NPC_REG, &npc);
@@ -306,7 +306,7 @@ Rsp::query(char* data, size_t len) {
     const char* str_default = "Unknown Core";
     char str[256];
     unsigned int thread_id;
-    if (sscanf(data, "qThreadExtraInfo,%d", &thread_id) != 1) {
+    if (sscanf(data, "qThreadExtraInfo,%u", &thread_id) != 1) {
       fprintf(stderr, "Could not parse qThreadExtraInfo packet\n");
       return this->send_str("");
     }
@@ -440,7 +440,7 @@ Rsp::reg_read(char* data, size_t len) {
   uint32_t rdata;
   char data_str[10];
 
-  if (sscanf(data, "%x", &addr) != 1) {
+  if (sscanf(data, "%" SCNx32, &addr) != 1) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -464,7 +464,7 @@ Rsp::reg_write(char* data, size_t len) {
   uint32_t wdata;
   DbgIF* dbgif;
 
-  if (sscanf(data, "%x=%08x", &addr, &wdata) != 2) {
+  if (sscanf(data, "%" SCNx32 "=%08" SCNx32, &addr, &wdata) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -938,7 +938,7 @@ Rsp::mem_read(char* data, size_t len) {
   unsigned int length;
   uint32_t rdata;
 
-  if (sscanf(data, "%x,%x", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%" SCNx32, &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -963,7 +963,7 @@ Rsp::mem_write_ascii(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%ld:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1019,7 +1019,7 @@ Rsp::mem_write(char* data, size_t len) {
   size_t length;
   unsigned int i;
 
-  if (sscanf(data, "%x,%lx:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1048,7 +1048,7 @@ Rsp::bp_insert(char* data, size_t len) {
   uint32_t addr;
   int bp_len;
 
-  if (3 != sscanf(data, "Z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
+  if (3 != sscanf(data, "Z%1d,%" SCNx32 ",%1d", (int *)&type, &addr, &bp_len)) {
     fprintf(stderr, "Could not get three arguments\n");
     return false;
   }
