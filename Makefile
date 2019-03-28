@@ -42,7 +42,7 @@ libdebugbridge.so: $(LIB_SRCS)
 
 ifdef pulpino
 push: debug_bridge
-	scp ./debug_bridge $(FPGA_HOSTNAME):/root/
+	scp ./debug_bridge root@$(FPGA_HOSTNAME):/root/
 endif
 
 sdk:
