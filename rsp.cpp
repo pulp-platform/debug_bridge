@@ -1072,9 +1072,10 @@ Rsp::bp_insert(char* data, size_t len) {
   }
 
   if (type != BP_MEMORY) {
-    fprintf(stderr, "ERROR: Not a memory bp\n");
-    this->send_str("");
-    return false;
+    fprintf(stderr, "Error: tried to insert an unsupported breakpoint of type %d\n", type);
+    // The proper response to an unsupported break point is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    return this->send_str("");
   }
 
   m_bp->insert(addr);
@@ -1098,8 +1099,10 @@ Rsp::bp_remove(char* data, size_t len) {
   }
 
   if (type != BP_MEMORY) {
-    fprintf(stderr, "Not a memory bp\n");
-    return false;
+    fprintf(stderr, "Error: tried to remove an unsupported breakpoint of type %d\n", type);
+    // The proper response to an unsupported break point is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    return this->send_str("");
   }
 
   m_bp->remove(addr);
