@@ -344,15 +344,11 @@ Rsp::query(char* data, size_t len) {
   {
     return this->send_str("Text=0;Data=0;Bss=0");
   }
-  else if (strncmp ("qT", data, strlen ("qT")) == 0)
-  {
-    // not supported, send empty packet
-    return this->send_str("");
-  }
 
-  fprintf(stderr, "Unknown query packet\n");
-
-  return false;
+  // The proper response to an unknown query packet is the empty string, cf.
+  // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+  fprintf(stderr, "Unknown query packet: %.*s\n", (int)len, data);
+  return this->send_str("");
 }
 
 bool
