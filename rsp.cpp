@@ -414,9 +414,11 @@ Rsp::v_packet(char* data, size_t len) {
     return this->waitStop(NULL);
   }
 
-  fprintf(stderr, "Unknown v packet\n");
-
-  return false;
+  // The proper response to an unknown v packet is the empty string, cf.
+  // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+  if (strncmp("vMustReplyEmpty", data, strlen("vMustReplyEmpty")) != 0)
+    fprintf(stderr, "Unknown v packet: %.*s\n", (int)len, data);
+  return this->send_str("");
 }
 
 bool
