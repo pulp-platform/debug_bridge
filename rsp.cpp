@@ -273,6 +273,50 @@ Rsp::multithread(char* data, size_t len) {
 }
 
 bool
+Rsp::monitor_help(char *str, size_t len) {
+  const char *text;
+  static const char text_general[] = 
+    "General commands:\n"
+    "	help  -- Display help for monitor commands\n"
+  ;
+  text = text_general;
+  char out[512];
+  if (!encode_hex(text, out, sizeof(out)))
+    return this->send_str("E00");
+
+  return this->send_str(out);
+}
+
+bool
+Rsp::monitor(char *str, size_t len) {
+  // Each two input characters translate to one output character + \0.
+  // gdb uses a default maximum of a little under 200 characters but might
+  // grow that when receiving bigger inputs (sic)...
+  // Currently there is no need for any really big payloads thus less than
+  // 200 is used below.
+  char buf[64];
+  if (len/2 >= sizeof(buf)) {
+    fprintf(stderr, "Insufficient buffer for complete monitor packet payload.\n");
+    return this->send_str("");
+  }
+
+  // Decode hex string
+  size_t i;
+  for(i = 0; i < len; i+=2)
+    sscanf(&str[i], "%2hhx", &buf[i/2]);
+  buf[i/2] = '\0';
+
+  size_t help_len = strlen("help");
+  if (strncmp(buf, "help", help_len) == 0) {
+    help_len += strspn(&buf[help_len], " \t");
+    return monitor_help(&buf[help_len], len-help_len);
+  }
+
+  // Default to not supported
+  return this->send_str("");
+}
+
+bool
 Rsp::query(char* data, size_t len) {
   int ret;
   char reply[256];
@@ -340,6 +384,10 @@ Rsp::query(char* data, size_t len) {
   else if (strncmp ("qOffsets", data, strlen ("qOffsets")) == 0)
   {
     return this->send_str("Text=0;Data=0;Bss=0");
+  }
+  else if (strncmp ("qRcmd,", data, strlen ("qRcmd,")) == 0)
+  {
+    return this->monitor(&data[6], len-6);
   }
 
   // The proper response to an unknown query packet is the empty string, cf.
@@ -1109,4 +1157,23 @@ Rsp::get_dbgif(unsigned int thread_id) {
   }
 
   return NULL;
+}
+
+bool
+Rsp::encode_hex(const char *in, char *out, size_t out_len) {
+  size_t in_len = strlen(in);
+  // This check guarantees that for every non-\0 character in the input 
+  // there are two bytes available in the out buffer + one for trailing \0.
+  if (2*in_len - 1 > out_len) {
+    fprintf(stderr, "%s: output buffer too small (need %zd, have %zd)\n", 
+      __func__, 2*in_len - 1, out_len);
+    return false;
+  }
+  size_t i = 0;
+  while (i < in_len && in[i] != '\0') {
+    sprintf(&out[2*i],"%02x", in[i]);
+    i++;
+  }
+  out[2*i] = '\0';
+  return true;
 }
