@@ -180,11 +180,13 @@ Rsp::decode(char* data, size_t len) {
     return false;
 
   default:
-    fprintf(stderr, "Unknown packet: starts with %c\n", data[0]);
-    break;
+    // The proper response to unsupported packets is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    fprintf(stderr, "Unknown packet: %.*s\n", (int)len, data);
+    return this->send_str("");
   }
 
-  return false;
+  return false; // Never reached
 }
 
 bool
