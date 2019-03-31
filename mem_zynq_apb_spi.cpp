@@ -92,54 +92,6 @@ ZynqAPBSPIIF::~ZynqAPBSPIIF() {
   close(g_mem_dev);
 }
 
-
-int
-ZynqAPBSPIIF::mmap_gen(
-  uint32_t mem_address,
-  uint32_t mem_size,
-  volatile uint32_t **return_ptr
-) {
-  uint32_t alloc_mem_size, page_mask, page_size;
-  volatile char *mem_ptr, *virt_ptr;
-  volatile uint32_t *uint_ptr;
-
-  int mem_dev = ::open("/dev/mem", O_RDWR | O_SYNC);
-  if(mem_dev == -1) {
-    printf ("mmap_gen: Opening /dev/mem failed\n");
-    return -1;
-  }
-
-  page_size = sysconf(_SC_PAGESIZE);
-  alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
-  page_mask = (page_size - 1);
-
-  if (page_size == -1) {
-    printf("mmap_gen: sysconf failed to get page size\n");
-    return -4;
-  }
-
-  mem_ptr = (char*)::mmap(NULL,
-                 alloc_mem_size,
-                 PROT_READ | PROT_WRITE,
-                 MAP_SHARED,
-                 mem_dev,
-                 (mem_address & ~page_mask));
-
-  if (mem_ptr == MAP_FAILED) {
-    printf("mmap_gen: map failed\n");
-    return -2;
-  }
-
-  virt_ptr = (mem_ptr + (mem_address & page_mask));
-  uint_ptr = (volatile uint32_t *) virt_ptr;
-  *return_ptr = uint_ptr;
-
-  close(mem_dev);
-
-  return 0;
-}
-
-
 int
 ZynqAPBSPIIF::is_fpga_programmed() {
   return (m_virt_status[0xC >> 2] & 0x4) >> 2;

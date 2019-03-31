@@ -1,5 +1,5 @@
 CXXFLAGS=-std=c++0x -g -Wall
-SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp
+SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp memmap.cpp
 
 CXX=g++
 ifdef pulpemu

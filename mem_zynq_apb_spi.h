@@ -23,8 +23,6 @@ class ZynqAPBSPIIF : public MemIF {
     inline void apb_write(uint32_t addr, uint32_t data) { m_virt_apbspi[addr >> 2] = data; }
     inline uint32_t apb_read(uint32_t addr) {      return m_virt_apbspi[addr >> 2]; }
 
-    int mmap_gen(uint32_t mem_address, uint32_t mem_size, volatile uint32_t **return_ptr);
-
     int is_fpga_programmed();
 
     void set_clkdiv(uint32_t clkdiv);
