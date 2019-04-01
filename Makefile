@@ -1,23 +1,18 @@
-CXXFLAGS=-std=c++0x -g
-SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp
+CXXFLAGS=-std=c++0x -g -Wall
+SRCS = debug_if.cpp breakpoints.cpp rsp.cpp cache.cpp bridge.cpp memmap.cpp
 
 CXX=g++
-SRCS += sim.cpp
 ifdef pulpemu
 	CXXFLAGS+=-DFPGA -DPULPEMU
 	CXX=arm-linux-gnueabihf-g++
 	SRCS += mem_zynq_apb_spi.cpp
-endif
-ifdef pulpino
+else ifdef pulpino
 	CXXFLAGS+=-DFPGA
 	CXX=arm-xilinx-linux-gnueabi-g++
 	SRCS += mem_zynq_spi.cpp
-endif
-ifndef pulpino
-ifndef pulpemu
+else
 	CXX=g++
 	SRCS += sim.cpp
-endif
 endif
 
 EXE_SRCS = main.cpp $(SRCS)
@@ -42,7 +37,7 @@ libdebugbridge.so: $(LIB_SRCS)
 
 ifdef pulpino
 push: debug_bridge
-	scp ./debug_bridge $(FPGA_HOSTNAME):/root/
+	scp ./debug_bridge root@$(FPGA_HOSTNAME):/root/
 endif
 
 sdk:

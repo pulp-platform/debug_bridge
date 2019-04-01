@@ -1,4 +1,4 @@
-
+#include <inttypes.h>
 #include "rsp.h"
 
 enum mp_type {
@@ -108,9 +108,6 @@ Rsp::loop() {
   char pkt[PACKET_MAX_LEN];
   size_t len;
 
-  fd_set rfds;
-  struct timeval tv;
-
   while (this->get_packet(pkt, &len)) {
     log->debug("Received $%.*s\n", len, pkt);
     if (!this->decode(pkt, len))
@@ -180,11 +177,13 @@ Rsp::decode(char* data, size_t len) {
     return false;
 
   default:
-    fprintf(stderr, "Unknown packet: starts with %c\n", data[0]);
-    break;
+    // The proper response to unsupported packets is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    fprintf(stderr, "Unknown packet: %.*s\n", (int)len, data);
+    return this->send_str("");
   }
 
-  return false;
+  return false; // Never reached
 }
 
 bool
@@ -192,16 +191,15 @@ Rsp::cont(char* data, size_t len) {
   uint32_t sig;
   uint32_t addr;
   uint32_t npc;
-  int i;
   bool npc_found = false;
   DbgIF* dbgif;
 
   // strip signal first
   if (data[0] == 'C') {
-    if (sscanf(data, "C%X;%X", &sig, &addr) == 2)
+    if (sscanf(data, "C%" SCNx32 ";%" SCNx32 "", &sig, &addr) == 2)
       npc_found = true;
   } else {
-    if (sscanf(data, "c%X", &addr) == 1)
+    if (sscanf(data, "c%" SCNx32 "", &addr) == 1)
       npc_found = true;
   }
 
@@ -223,12 +221,11 @@ bool
 Rsp::step(char* data, size_t len) {
   uint32_t addr;
   uint32_t npc;
-  int i;
   DbgIF* dbgif;
 
   // strip signal first
   if (data[0] == 'S') {
-    for (i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
       if (data[i] == ';') {
         data = &data[i+1];
         break;
@@ -236,7 +233,7 @@ Rsp::step(char* data, size_t len) {
     }
   }
 
-  if (sscanf(data, "%x", &addr) == 1) {
+  if (sscanf(data, "%" SCNx32, &addr) == 1) {
     dbgif = this->get_dbgif(m_thread_sel);
     // only when we have received an address
     dbgif->read(DBG_NPC_REG, &npc);
@@ -275,6 +272,162 @@ Rsp::multithread(char* data, size_t len) {
   return false;
 }
 
+#define PULP_CTRL_AXI_ADDR   0x51000000
+#include "mem_zynq_apb_spi.h"
+
+int pulp_ctrl(int fetch_en, int reset) {
+  static volatile uint32_t* ctrl_base = NULL;
+    if (MemIF::mmap_gen(PULP_CTRL_AXI_ADDR, 0x1000, &ctrl_base) != 0) {
+      fprintf(stderr, "Could not map CTRL interface\n");
+      return 1;
+    }
+
+  volatile uint32_t* gpio = ctrl_base + 0x0; // FIXME: name
+  volatile uint32_t* dir  = ctrl_base + 0x1;
+
+  // now we can actually write to the peripheral
+  uint32_t val = 0x0;
+  if (reset == 0)
+    val |= (1 << 31); // reset is active low
+
+  if (fetch_en)
+    val |= (1 << 0);
+
+  *dir  = 0x0; // configure as output
+  *gpio = val;
+
+  return 0;
+}
+
+#define SPIDEV "/dev/spidev32766.0"
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+int set_boot_addr(uint32_t boot_addr) {
+  int fd;
+  uint8_t wr_buf[9];
+  int retval = 0;
+
+  const uint32_t reg_addr = 0x1A107008;
+
+  wr_buf[0] = 0x02; // write command
+  wr_buf[1] = (reg_addr >> 24) & 0xFF;
+  wr_buf[2] = (reg_addr >> 16) & 0xFF;
+  wr_buf[3] = (reg_addr >>  8) & 0xFF;
+  wr_buf[4] = (reg_addr >>  0) & 0xFF;
+  // address
+  wr_buf[5] = (boot_addr >> 24) & 0xFF;
+  wr_buf[6] = (boot_addr >> 16) & 0xFF;
+  wr_buf[7] = (boot_addr >>  8) & 0xFF;
+  wr_buf[8] = (boot_addr >>  0) & 0xFF;
+
+  fd = open(SPIDEV, O_RDWR);
+  if (fd <= 0) {
+    perror(SPIDEV " not found");
+
+    retval = -1;
+    goto fail;
+  }
+
+  if (write(fd, wr_buf, 9) != 9) {
+    perror("Could not write to " SPIDEV);
+
+    retval = -1;
+    goto fail;
+  }
+
+fail:
+  close(fd);
+
+  return retval;
+}
+
+bool
+Rsp::monitor_help(char *str, size_t len) {
+  const char *text;
+  if (strncmp ("reset", str, strlen("reset")) == 0)
+  {
+    static const char text_reset[] = 
+      "Help for reset:\n"
+      "	run  -- Reset and restart the target core\n"
+      "	halt -- Reset the target core and hold its execution\n"
+    ;
+    text = text_reset;
+  }
+  else 
+  {
+    static const char text_general[] = 
+      "General commands:\n"
+      "	help  -- Display help for monitor commands\n"
+      "	reset -- Reset the target core\n"
+    ;
+    text = text_general;
+  }
+  char out[512];
+  if (!encode_hex(text, out, sizeof(out)))
+    return this->send_str("E00");
+
+  return this->send_str(out);
+}
+
+bool
+Rsp::reset(bool halt) {
+    pulp_ctrl(0, 1);
+    pulp_ctrl(0, 0);
+    
+    set_boot_addr(0);
+
+    if (!halt) {
+      pulp_ctrl(1, 0);
+    } else {
+      return this->send_str("E00");
+      // FIXME: the following does not really work, neither does simply 
+      // not re-enabling the fetch enable
+      DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+      dbgif->write(DBG_IE_REG, 0xFFFF);
+    }
+
+    return this->send_str("OK");
+}
+
+bool
+Rsp::monitor(char *str, size_t len) {
+  // Each two input characters translate to one output character + \0.
+  // gdb uses a default maximum of a little under 200 characters but might
+  // grow that when receiving bigger inputs (sic)...
+  // Currently there is no need for any really big payloads thus less than
+  // 200 is used below.
+  char buf[64];
+  if (len/2 >= sizeof(buf)) {
+    fprintf(stderr, "Insufficient buffer for complete monitor packet payload.\n");
+    return this->send_str("");
+  }
+
+  // Decode hex string
+  size_t i;
+  for(i = 0; i < len; i+=2)
+    sscanf(&str[i], "%2hhx", &buf[i/2]);
+  buf[i/2] = '\0';
+
+  size_t help_len = strlen("help");
+  size_t reset_len = strlen("reset");
+  if (strncmp(buf, "help", help_len) == 0) {
+    help_len += strspn(&buf[help_len], " \t");
+    return monitor_help(&buf[help_len], len-help_len);
+  }
+  else if (strncmp(buf, "reset", reset_len) == 0) 
+  {
+    bool halt = 0;
+    reset_len += strspn(&buf[reset_len], " \t");
+    if (strncmp(&buf[reset_len], "halt", strlen("halt")) == 0) {
+      halt = 1;
+    }
+    return this->reset(halt);
+  } 
+
+  // Default to not supported
+  return this->send_str("");
+}
+
 bool
 Rsp::query(char* data, size_t len) {
   int ret;
@@ -309,7 +462,7 @@ Rsp::query(char* data, size_t len) {
     const char* str_default = "Unknown Core";
     char str[256];
     unsigned int thread_id;
-    if (sscanf(data, "qThreadExtraInfo,%d", &thread_id) != 1) {
+    if (sscanf(data, "qThreadExtraInfo,%u", &thread_id) != 1) {
       fprintf(stderr, "Could not parse qThreadExtraInfo packet\n");
       return this->send_str("");
     }
@@ -322,7 +475,7 @@ Rsp::query(char* data, size_t len) {
       strcpy(str, str_default);
 
     ret = 0;
-    for(int i = 0; i < strlen(str); i++)
+    for(size_t i = 0; i < strlen(str); i++)
       ret += snprintf(&reply[ret], 256 - ret, "%02X", str[i]);
 
     return this->send(reply, ret);
@@ -344,23 +497,22 @@ Rsp::query(char* data, size_t len) {
   {
     return this->send_str("Text=0;Data=0;Bss=0");
   }
-  else if (strncmp ("qT", data, strlen ("qT")) == 0)
+  else if (strncmp ("qRcmd,", data, strlen ("qRcmd,")) == 0)
   {
-    // not supported, send empty packet
-    return this->send_str("");
+    return this->monitor(&data[6], len-6);
   }
 
-  fprintf(stderr, "Unknown query packet\n");
-
-  return false;
+  // The proper response to an unknown query packet is the empty string, cf.
+  // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+  fprintf(stderr, "Unknown query packet: %.*s\n", (int)len, data);
+  return this->send_str("");
 }
 
 bool
 Rsp::v_packet(char* data, size_t len) {
   if (strncmp ("vKill", data, strlen ("vKill")) == 0)
   {
-    this->send_str("OK");
-    return false;
+    return reset(0);
   }
   else if (strncmp ("vCont?", data, strlen ("vCont?")) == 0)
   {
@@ -369,9 +521,11 @@ Rsp::v_packet(char* data, size_t len) {
   else if (strncmp ("vCont", data, strlen ("vCont")) == 0)
   {
     bool threadsCmd[m_dbgifs.size()];
-    for (int i=0; i<m_dbgifs.size(); i++) threadsCmd[i] = false;
+    for (std::size_t i=0; i<m_dbgifs.size(); i++) 
+      threadsCmd[i] = false;
+
     // vCont can contains several commands, handle them in sequence
-      char *str = strtok(&data[6], ";");
+    char *str = strtok(&data[6], ";");
     while(str != NULL) {
       // Extract command and thread ID
       char *delim = index(str, ':');
@@ -397,7 +551,7 @@ Rsp::v_packet(char* data, size_t len) {
 
       if (cont) {
         if (tid == -1) {
-          for (int i=0; i<m_dbgifs.size(); i++) {
+          for (std::size_t i=0; i<m_dbgifs.size(); i++) {
             if (!threadsCmd[i]) resumeCoresPrepare(this->get_dbgif(i), step);
           }
         } else {
@@ -414,16 +568,17 @@ Rsp::v_packet(char* data, size_t len) {
     return this->waitStop(NULL);
   }
 
-  fprintf(stderr, "Unknown v packet\n");
-
-  return false;
+  // The proper response to an unknown v packet is the empty string, cf.
+  // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+  if (strncmp("vMustReplyEmpty", data, strlen("vMustReplyEmpty")) != 0)
+    fprintf(stderr, "Unknown v packet: %.*s\n", (int)len, data);
+  return this->send_str("");
 }
 
 bool
 Rsp::regs_send() {
   uint32_t gpr[32];
   uint32_t npc;
-  uint32_t ppc;
   char regs_str[512];
   int i;
 
@@ -446,7 +601,7 @@ Rsp::reg_read(char* data, size_t len) {
   uint32_t rdata;
   char data_str[10];
 
-  if (sscanf(data, "%x", &addr) != 1) {
+  if (sscanf(data, "%" SCNx32, &addr) != 1) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -468,10 +623,9 @@ bool
 Rsp::reg_write(char* data, size_t len) {
   uint32_t addr;
   uint32_t wdata;
-  char data_str[10];
   DbgIF* dbgif;
 
-  if (sscanf(data, "%x=%08x", &addr, &wdata) != 2) {
+  if (sscanf(data, "%" SCNx32 "=%08" SCNx32, &addr, &wdata) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -653,14 +807,13 @@ Rsp::signal() {
 bool
 Rsp::send(const char* data, size_t len) {
   int ret;
-  int i;
   size_t raw_len = 0;
   char* raw = (char*)malloc(len * 2 + 4);
   unsigned int checksum = 0;
 
   raw[raw_len++] = '$';
 
-  for (i = 0; i < len; i++) {
+  for (size_t i = 0; i < len; i++) {
     char c = data[i];
 
     // check if escaping needed
@@ -688,7 +841,7 @@ Rsp::send(const char* data, size_t len) {
   do {
     log->debug("Sending %.*s\n", raw_len, raw);
 
-    if (::send(m_socket_client, raw, raw_len, 0) != raw_len) {
+    if ((size_t)::send(m_socket_client, raw, raw_len, 0) != raw_len) {
       free(raw);
       fprintf(stderr, "Unable to send data to client\n");
       return false;
@@ -816,7 +969,6 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
   uint32_t cause;
   uint32_t ppc;
   uint32_t npc;
-  uint32_t data;
 
   // now let's handle software breakpoints
 
@@ -855,7 +1007,6 @@ Rsp::resumeCoresPrepare(DbgIF *dbgif, bool step) {
   uint32_t cause;
   uint32_t ppc;
   uint32_t npc;
-  uint32_t data;
 
   // now let's handle software breakpoints
 
@@ -917,8 +1068,6 @@ Rsp::resumeAll(bool step) {
 bool
 Rsp::resume(bool step) {
   if (m_dbgifs.size() == 1) {
-    int ret;
-    char pkt;
     DbgIF *dbgif = this->get_dbgif(m_thread_sel);
 
     resumeCore(dbgif, step);
@@ -935,8 +1084,6 @@ Rsp::resume(bool step) {
 
 bool
 Rsp::resume(int tid, bool step) {
-  int ret;
-  char pkt;
   DbgIF *dbgif = this->get_dbgif(tid);
 
   resumeCore(dbgif, step);
@@ -949,18 +1096,17 @@ Rsp::mem_read(char* data, size_t len) {
   char buffer[512];
   char reply[512];
   uint32_t addr;
-  uint32_t length;
+  unsigned int length;
   uint32_t rdata;
-  int i;
 
-  if (sscanf(data, "%x,%x", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%" SCNx32, &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
 
   m_mem->access(0, addr, length, buffer);
 
-  for(i = 0; i < length; i++) {
+  for(unsigned int i = 0; i < length; i++) {
     rdata = buffer[i];
     snprintf(&reply[i * 2], 3, "%02x", rdata);
   }
@@ -973,12 +1119,12 @@ Rsp::mem_write_ascii(char* data, size_t len) {
   uint32_t addr;
   size_t length;
   uint32_t wdata;
-  int i, j;
+  unsigned int i, j;
 
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%x,%ld:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1032,13 +1178,9 @@ bool
 Rsp::mem_write(char* data, size_t len) {
   uint32_t addr;
   size_t length;
-  uint32_t wdata;
-  int i, j;
+  unsigned int i;
 
-  char* buffer;
-  int buffer_len;
-
-  if (sscanf(data, "%x,%lx:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1065,18 +1207,18 @@ bool
 Rsp::bp_insert(char* data, size_t len) {
   enum mp_type type;
   uint32_t addr;
-  uint32_t data_bp;
   int bp_len;
 
-  if (3 != sscanf(data, "Z%1d,%x,%1d", (int *)&type, &addr, &bp_len)) {
+  if (3 != sscanf(data, "Z%1d,%" SCNx32 ",%1d", (int *)&type, &addr, &bp_len)) {
     fprintf(stderr, "Could not get three arguments\n");
     return false;
   }
 
   if (type != BP_MEMORY) {
-    fprintf(stderr, "ERROR: Not a memory bp\n");
-    this->send_str("");
-    return false;
+    fprintf(stderr, "Error: tried to insert an unsupported breakpoint of type %d\n", type);
+    // The proper response to an unsupported break point is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    return this->send_str("");
   }
 
   m_bp->insert(addr);
@@ -1100,8 +1242,10 @@ Rsp::bp_remove(char* data, size_t len) {
   }
 
   if (type != BP_MEMORY) {
-    fprintf(stderr, "Not a memory bp\n");
-    return false;
+    fprintf(stderr, "Error: tried to remove an unsupported breakpoint of type %d\n", type);
+    // The proper response to an unsupported break point is the empty string, cf.
+    // https://sourceware.org/gdb/onlinedocs/gdb/Packets.html
+    return this->send_str("");
   }
 
   m_bp->remove(addr);
@@ -1117,11 +1261,30 @@ Rsp::bp_remove(char* data, size_t len) {
 }
 
 DbgIF*
-Rsp::get_dbgif(int thread_id) {
+Rsp::get_dbgif(unsigned int thread_id) {
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
     if ((*it)->get_thread_id() == thread_id)
       return *it;
   }
 
   return NULL;
+}
+
+bool
+Rsp::encode_hex(const char *in, char *out, size_t out_len) {
+  size_t in_len = strlen(in);
+  // This check guarantees that for every non-\0 character in the input 
+  // there are two bytes available in the out buffer + one for trailing \0.
+  if (2*in_len - 1 > out_len) {
+    fprintf(stderr, "%s: output buffer too small (need %zd, have %zd)\n", 
+      __func__, 2*in_len - 1, out_len);
+    return false;
+  }
+  size_t i = 0;
+  while (i < in_len && in[i] != '\0') {
+    sprintf(&out[2*i],"%02x", in[i]);
+    i++;
+  }
+  out[2*i] = '\0';
+  return true;
 }

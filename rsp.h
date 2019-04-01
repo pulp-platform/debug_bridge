@@ -28,6 +28,7 @@ class Rsp {
     bool wait_client();
     bool loop();
 
+  private:
     bool decode(char* data, size_t len);
 
     bool multithread(char* data, size_t len);
@@ -36,6 +37,7 @@ class Rsp {
     bool step(char* data, size_t len);
 
     bool query(char* data, size_t len);
+    bool monitor(char* data, size_t len);
     bool v_packet(char* data, size_t len);
 
     bool regs_send();
@@ -48,7 +50,6 @@ class Rsp {
 
     bool send(const char* data, size_t len);
     bool send_str(const char* data);
-  private:
     // internal helper functions
     bool pc_read(unsigned int* pc);
 
@@ -67,7 +68,13 @@ class Rsp {
     bool bp_insert(char* data, size_t len);
     bool bp_remove(char* data, size_t len);
 
-    DbgIF* get_dbgif(int thread_id);
+    bool reset(bool halt);
+
+    bool monitor_help(char *str, size_t len);
+
+    bool encode_hex(const char *in, char *out, size_t out_len);
+
+    DbgIF* get_dbgif(unsigned int thread_id);
 
     int m_socket_port;
     int m_socket_in;

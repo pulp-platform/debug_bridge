@@ -31,7 +31,7 @@ bool platform_pulp(MemIF* mem, std::list<DbgIF*>* p_list, LogIF *log) {
 
   ncores = info >> 16;
 
-  for(int i = 0; i < ncores; i++) {
+  for(unsigned int i = 0; i < ncores; i++) {
     p_list->push_back(new DbgIF(mem, 0x10300000 + i * 0x8000, log));
   }
 
