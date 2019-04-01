@@ -28,6 +28,7 @@ class Rsp {
     bool wait_client();
     bool loop();
 
+  private:
     bool decode(char* data, size_t len);
 
     bool multithread(char* data, size_t len);
@@ -48,7 +49,6 @@ class Rsp {
 
     bool send(const char* data, size_t len);
     bool send_str(const char* data);
-  private:
     // internal helper functions
     bool pc_read(unsigned int* pc);
 
