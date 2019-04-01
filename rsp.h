@@ -68,6 +68,8 @@ class Rsp {
     bool bp_insert(char* data, size_t len);
     bool bp_remove(char* data, size_t len);
 
+    bool reset(bool halt);
+
     bool monitor_help(char *str, size_t len);
 
     bool encode_hex(const char *in, char *out, size_t out_len);

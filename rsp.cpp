@@ -272,19 +272,121 @@ Rsp::multithread(char* data, size_t len) {
   return false;
 }
 
+#define PULP_CTRL_AXI_ADDR   0x51000000
+#include "mem_zynq_apb_spi.h"
+
+int pulp_ctrl(int fetch_en, int reset) {
+  static volatile uint32_t* ctrl_base = NULL;
+    if (MemIF::mmap_gen(PULP_CTRL_AXI_ADDR, 0x1000, &ctrl_base) != 0) {
+      fprintf(stderr, "Could not map CTRL interface\n");
+      return 1;
+    }
+
+  volatile uint32_t* gpio = ctrl_base + 0x0; // FIXME: name
+  volatile uint32_t* dir  = ctrl_base + 0x1;
+
+  // now we can actually write to the peripheral
+  uint32_t val = 0x0;
+  if (reset == 0)
+    val |= (1 << 31); // reset is active low
+
+  if (fetch_en)
+    val |= (1 << 0);
+
+  *dir  = 0x0; // configure as output
+  *gpio = val;
+
+  return 0;
+}
+
+#define SPIDEV "/dev/spidev32766.0"
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+int set_boot_addr(uint32_t boot_addr) {
+  int fd;
+  uint8_t wr_buf[9];
+  int retval = 0;
+
+  const uint32_t reg_addr = 0x1A107008;
+
+  wr_buf[0] = 0x02; // write command
+  wr_buf[1] = (reg_addr >> 24) & 0xFF;
+  wr_buf[2] = (reg_addr >> 16) & 0xFF;
+  wr_buf[3] = (reg_addr >>  8) & 0xFF;
+  wr_buf[4] = (reg_addr >>  0) & 0xFF;
+  // address
+  wr_buf[5] = (boot_addr >> 24) & 0xFF;
+  wr_buf[6] = (boot_addr >> 16) & 0xFF;
+  wr_buf[7] = (boot_addr >>  8) & 0xFF;
+  wr_buf[8] = (boot_addr >>  0) & 0xFF;
+
+  fd = open(SPIDEV, O_RDWR);
+  if (fd <= 0) {
+    perror(SPIDEV " not found");
+
+    retval = -1;
+    goto fail;
+  }
+
+  if (write(fd, wr_buf, 9) != 9) {
+    perror("Could not write to " SPIDEV);
+
+    retval = -1;
+    goto fail;
+  }
+
+fail:
+  close(fd);
+
+  return retval;
+}
+
 bool
 Rsp::monitor_help(char *str, size_t len) {
   const char *text;
-  static const char text_general[] = 
-    "General commands:\n"
-    "	help  -- Display help for monitor commands\n"
-  ;
-  text = text_general;
+  if (strncmp ("reset", str, strlen("reset")) == 0)
+  {
+    static const char text_reset[] = 
+      "Help for reset:\n"
+      "	run  -- Reset and restart the target core\n"
+      "	halt -- Reset the target core and hold its execution\n"
+    ;
+    text = text_reset;
+  }
+  else 
+  {
+    static const char text_general[] = 
+      "General commands:\n"
+      "	help  -- Display help for monitor commands\n"
+      "	reset -- Reset the target core\n"
+    ;
+    text = text_general;
+  }
   char out[512];
   if (!encode_hex(text, out, sizeof(out)))
     return this->send_str("E00");
 
   return this->send_str(out);
+}
+
+bool
+Rsp::reset(bool halt) {
+    pulp_ctrl(0, 1);
+    pulp_ctrl(0, 0);
+    
+    set_boot_addr(0);
+
+    if (!halt) {
+      pulp_ctrl(1, 0);
+    } else {
+      return this->send_str("E00");
+      // FIXME: the following does not really work, neither does simply 
+      // not re-enabling the fetch enable
+      DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+      dbgif->write(DBG_IE_REG, 0xFFFF);
+    }
+
+    return this->send_str("OK");
 }
 
 bool
@@ -307,10 +409,20 @@ Rsp::monitor(char *str, size_t len) {
   buf[i/2] = '\0';
 
   size_t help_len = strlen("help");
+  size_t reset_len = strlen("reset");
   if (strncmp(buf, "help", help_len) == 0) {
     help_len += strspn(&buf[help_len], " \t");
     return monitor_help(&buf[help_len], len-help_len);
   }
+  else if (strncmp(buf, "reset", reset_len) == 0) 
+  {
+    bool halt = 0;
+    reset_len += strspn(&buf[reset_len], " \t");
+    if (strncmp(&buf[reset_len], "halt", strlen("halt")) == 0) {
+      halt = 1;
+    }
+    return this->reset(halt);
+  } 
 
   // Default to not supported
   return this->send_str("");
