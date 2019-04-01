@@ -512,8 +512,7 @@ bool
 Rsp::v_packet(char* data, size_t len) {
   if (strncmp ("vKill", data, strlen ("vKill")) == 0)
   {
-    this->send_str("OK");
-    return false;
+    return reset(0);
   }
   else if (strncmp ("vCont?", data, strlen ("vCont?")) == 0)
   {
