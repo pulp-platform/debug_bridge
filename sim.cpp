@@ -87,8 +87,7 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    uint8_t ok = *((uint8_t*)&data[0]);
-    if (ok == -1) {
+    if (data[0] == -1) {
       fprintf(stderr, "Write failed on simulator\n");
       return false;
     }
@@ -100,13 +99,12 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    uint32_t size = *((uint32_t*)&data[1]);
-    uint8_t ok    = data[0];
-
-    if (ok == -1) {
+    if (data[0] == -1) {
       fprintf(stderr, "Read failed on simulator\n");
       return false;
     }
+
+    uint32_t size = *((uint32_t*)&data[1]);
 
     ret = recv(m_socket, buffer, size, 0);
     if (ret == -1 || ret == 0) {
