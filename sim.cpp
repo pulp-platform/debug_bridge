@@ -58,8 +58,14 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
   memset(data, 0, sizeof(data));
 
   data[0] = write ? 1 : 0;
-  *((int*)&data[1]) = addr;
-  *((int*)&data[5]) = size;
+  data[1] = (addr >>  0) & 0xFF;
+  data[2] = (addr >>  8) & 0xFF;
+  data[3] = (addr >> 16) & 0xFF;
+  data[4] = (addr >> 24) & 0xFF;
+  data[5] = (size >>  0) & 0xFF;
+  data[6] = (size >>  8) & 0xFF;
+  data[7] = (size >> 16) & 0xFF;
+  data[8] = (size >> 24) & 0xFF;
 
   ret = send(m_socket, data, 9, 0);
   if (ret != 9) {
@@ -104,8 +110,7 @@ bool SimIF::access_raw(bool write, unsigned int addr, int size, char* buffer) {
       return false;
     }
 
-    uint32_t size = *((uint32_t*)&data[1]);
-
+    uint32_t size = (data[1] << 0) | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
     ret = recv(m_socket, buffer, size, 0);
     if (ret == -1 || ret == 0) {
       fprintf(stderr, "Unable to get a response from simulator: %s\n", strerror(errno));
