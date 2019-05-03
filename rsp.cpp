@@ -668,7 +668,8 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
     ret = recv(m_socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-      fprintf(stderr, "RSP: Error receiving\n");
+      fprintf(stderr, "RSP: Error receiving start bit: %s\n",
+              ret == 0 ? "Connection reset by peer" : strerror(errno));
       return false;
     }
 
@@ -697,7 +698,8 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
     ret = recv(m_socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-      fprintf(stderr, "RSP: Error receiving\n");
+      fprintf(stderr, "RSP: Error receiving payload: %s\n",
+              ret == 0 ? "Connection reset by peer" : strerror(errno));
       return false;
     }
 
@@ -728,13 +730,15 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
   // checksum, 2 bytes
   ret = recv(m_socket_client, &check_chars[0], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-    fprintf(stderr, "RSP: Error receiving\n");
+    fprintf(stderr, "RSP: Error receiving checksum[0]: %s\n",
+            ret == 0 ? "Connection reset by peer" : strerror(errno));
     return false;
   }
 
   ret = recv(m_socket_client, &check_chars[1], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-    fprintf(stderr, "RSP: Error receiving\n");
+    fprintf(stderr, "RSP: Error receiving checksum[1]: %s\n",
+            ret == 0 ? "Connection reset by peer" : strerror(errno));
     return false;
   }
 
