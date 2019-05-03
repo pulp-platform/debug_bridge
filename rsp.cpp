@@ -45,6 +45,7 @@ bool
 Rsp::open() {
   struct sockaddr_in addr;
   int yes = 1;
+  bool ret = 0;
 
   addr.sin_family = AF_INET;
   addr.sin_port = htons(m_socket_port);
@@ -77,10 +78,13 @@ Rsp::open() {
 
   // now clear resources
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-    (*it)->halt();
+    if (!(*it)->halt()) {
+      printf("ERROR: failed sending halt\n");
+      ret = 1;
+    }
   }
 
-  return true;
+  return ret;
 }
 
 void
@@ -950,7 +954,9 @@ Rsp::waitStop(DbgIF* dbgif) {
           return this->signal();
         } else {          
           for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-            (*it)->halt();
+            if (!(*it)->halt()) {
+              printf("ERROR: failed sending halt\n");
+            }
 
             if (!(*it)->is_stopped()) {
               printf("ERROR: failed to stop core\n");
