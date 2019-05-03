@@ -1058,13 +1058,6 @@ Rsp::resumeCores() {
   }
 }
 
-void
-Rsp::resumeAll(bool step) {  
-  for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-    resumeCore(*it, step);
-  }
-}
-
 bool
 Rsp::resume(bool step) {
   if (m_dbgifs.size() == 1) {

@@ -56,7 +56,6 @@ class Rsp {
     bool waitStop(DbgIF* dbgif);
     bool resume(bool step);
     bool resume(int tid, bool step);
-    void resumeAll(bool step);
     void resumeCore(DbgIF* dbgif, bool step);
     void resumeCoresPrepare(DbgIF *dbgif, bool step);
     void resumeCores();
