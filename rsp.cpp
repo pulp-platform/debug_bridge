@@ -989,27 +989,10 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
   dbgif->read(DBG_HIT_REG, &hit);
   dbgif->read(DBG_CAUSE_REG, &cause);
 
-  // if there is a breakpoint at this address, let's remove it and single-step over it
-  bool hasStepped = false;
 
-  if (m_bp->at_addr(ppc)) {
-    m_bp->disable(ppc);
-    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
-    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
-    m_bp->enable(ppc);
-    hasStepped = true;
-  }
-
-  if (!step || !hasStepped) {
-    // clear hit register, has to be done before CTRL
-    dbgif->write(DBG_HIT_REG, 0);
-
-    if (step)
-      dbgif->write(DBG_CTRL_REG, 0x1);
-    else
-      dbgif->write(DBG_CTRL_REG, 0);
-  }
-
+  // Reset single step trace hit flag before any further steps via CTRL
+  dbgif->write(DBG_HIT_REG, 0);
+  dbgif->write(DBG_CTRL_REG, step); // Exit debug mode
 }
 
 void
@@ -1257,9 +1240,8 @@ Rsp::bp_remove(char* data, size_t len) {
 
   // check if we are currently on this bp that is removed
   dbgif->read(DBG_PPC_REG, &ppc);
-
   if (addr == ppc) {
-    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
+    dbgif->write(DBG_NPC_REG, ppc); // re-execute the original instruction next
   }
 
   return this->send_str("OK");
