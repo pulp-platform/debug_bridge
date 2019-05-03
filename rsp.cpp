@@ -938,7 +938,9 @@ Rsp::waitStop(DbgIF* dbgif) {
       ret = recv(m_socket_client, &pkt, 1, 0);
       if (ret == 1 && pkt == 0x3) {
         if (dbgif) {
-          dbgif->halt();
+          if (!dbgif->halt()) {
+            printf("ERROR: failed sending halt\n");
+          }
 
           if (!dbgif->is_stopped()) {
             printf("ERROR: failed to stop core\n");
