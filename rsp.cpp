@@ -9,18 +9,12 @@ enum mp_type {
   WP_ACCESS   = 4
 };
 
-enum target_signal {
-  TARGET_SIGNAL_NONE =  0,
-  TARGET_SIGNAL_INT  =  2,
-  TARGET_SIGNAL_ILL  =  4,
-  TARGET_SIGNAL_TRAP =  5,
-  TARGET_SIGNAL_FPE  =  8,
-  TARGET_SIGNAL_BUS  = 10,
-  TARGET_SIGNAL_SEGV = 11,
-  TARGET_SIGNAL_ALRM = 14,
-  TARGET_SIGNAL_STOP = 17,
-  TARGET_SIGNAL_USR2 = 31,
-  TARGET_SIGNAL_PWR  = 32
+// Cf. riscv_defines.sv and riscv_controller.sv (and RISCV debug draft 0.4)
+enum debug_causes {
+  CAUSE_ILLEGAL_INSN = 0x02, // Illegal instruction
+  CAUSE_BREAKPOINT   = 0x03, // Break point
+  CAUSE_ECALL_UMODE  = 0x08, // ECALL from User Mode
+  CAUSE_ECALL_MMODE  = 0x0B, // ECALL from Machine Mode
 };
 
 #define PACKET_MAX_LEN 4096
@@ -122,10 +116,23 @@ Rsp::loop() {
 }
 
 bool
+Rsp::ctrlc() {
+  // Cf. https://sourceware.org/gdb/onlinedocs/gdb/Interrupts.html
+  log->debug ("Received break\n");
+
+  DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+  if (!dbgif->halt() || !dbgif->is_stopped()) {
+    printf("ERROR: could not halt.\n");
+    return false;
+  }
+
+  return this->send_signal(TARGET_SIGNAL_INT);
+}
+
+bool
 Rsp::decode(char* data, size_t len) {
   if (data[0] == 0x03) {
-    log->debug ("Received break\n");
-    return this->signal();
+    return this->ctrlc();
   }
 
   switch (data[0]) {
@@ -155,9 +162,13 @@ Rsp::decode(char* data, size_t len) {
   case 'm':
     return this->mem_read(&data[1], len-1);
 
-  case '?':
-    return this->signal();
-
+  case '?': {
+    DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+    if (dbgif->is_stopped())
+      return this->send_stop_reason();
+    else
+      return this->send_str("OK");
+  }
   case 'v':
     return this->v_packet(&data[0], len);
 
@@ -772,44 +783,52 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
 }
 
 bool
-Rsp::signal() {
+Rsp::send_signal(enum target_signal signal) {
+  if (signal >= TARGET_SIGNAL_LAST)
+    return false;
+
+  char str[4];
+  int len = snprintf(str, 4, "S%02x", signal);
+  return (len == 3) && this->send(str, len);
+}
+
+bool
+Rsp::send_stop_reason() {
   uint32_t cause;
   uint32_t hit;
-  int signal;
-  char str[4];
-  int len;
-  DbgIF* dbgif;
+  enum target_signal signal;
+  DbgIF* dbgif = this->get_dbgif(m_thread_sel);
 
-  dbgif = this->get_dbgif(m_thread_sel);
+  // FIXME: why, and why here?
+  dbgif->write(DBG_IE_REG, 0xFFFF); // Make all debug interrupts cause traps
 
-  dbgif->write(DBG_IE_REG, 0xFFFF);
+  // Figure out why we are stopped
+  if (!dbgif->read(DBG_HIT_REG, &hit))
+    return false;
+  if (!dbgif->read(DBG_CAUSE_REG, &cause))
+    return false;
 
-  // figure out why we are stopped
-  if (dbgif->is_stopped()) {
-    if (!dbgif->read(DBG_HIT_REG, &hit))
-      return false;
-    if (!dbgif->read(DBG_CAUSE_REG, &cause))
-      return false;
+  bool irq = cause & (1 << 31);
+  cause &= 0x1F;
 
-    if (hit & 0x1)
-      signal = TARGET_SIGNAL_TRAP;
-    else if(cause & (1 << 31))
-      signal = TARGET_SIGNAL_INT;
-    else if(cause & (1 << 3))
-      signal = TARGET_SIGNAL_TRAP;
-    else if(cause & (1 << 2))
-      signal = TARGET_SIGNAL_ILL;
-    else if(cause & (1 << 5))
-      signal = TARGET_SIGNAL_BUS;
-    else
-      signal = TARGET_SIGNAL_STOP;
-  } else {
+  if (irq) // Interrupt
+    signal = TARGET_SIGNAL_INT;
+  else if (hit & 0x01) // Single step
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ILLEGAL_INSN)
+    signal = TARGET_SIGNAL_ILL;
+  else if (cause == CAUSE_BREAKPOINT)
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ECALL_UMODE)
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ECALL_MMODE)
+    signal = TARGET_SIGNAL_TRAP;
+  else {
+    printf("ERROR: could not determine the reason why we are stopped.\n");
     signal = TARGET_SIGNAL_NONE;
   }
 
-  len = snprintf(str, 4, "S%02x", signal);
-  
-  return this->send(str, len);
+  return this->send_signal(signal);
 }
 
 bool
@@ -894,16 +913,17 @@ Rsp::pc_read(unsigned int* pc) {
 
   dbgif->read(DBG_HIT_REG, &hit);
   dbgif->read(DBG_CAUSE_REG, &cause);
+  bool irq = cause & (1 << 31);
+  cause &= 0x1F;
 
+  // Correct PC for SW interrupts etc. FIXME: document
   if (hit & 0x1)
     *pc = npc;
-  else if(cause & (1 << 31)) // interrupt
+  else if (irq)
     *pc = npc;
-  else if(cause == 3)  // breakpoint
+  else if (cause == CAUSE_BREAKPOINT)
     *pc = ppc;
-  else if(cause == 2)
-    *pc = ppc;
-  else if(cause == 5)
+  else if (cause == CAUSE_ILLEGAL_INSN)
     *pc = ppc;
   else
     *pc = npc;
@@ -924,12 +944,12 @@ Rsp::waitStop(DbgIF* dbgif) {
     //First check if one core has stopped
     if (dbgif) {
       if (dbgif->is_stopped()) {
-        return this->signal();
+        return this->send_stop_reason();
       }
     } else {
       for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
         if ((*it)->is_stopped()) {
-          return this->signal();
+          return this->send_stop_reason();
         }
       }
     }
@@ -955,8 +975,8 @@ Rsp::waitStop(DbgIF* dbgif) {
             return false;
           }
 
-          return this->signal();
-        } else {          
+          return this->send_signal(TARGET_SIGNAL_INT);
+        } else {
           for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
             if (!(*it)->halt()) {
               printf("ERROR: failed sending halt\n");
@@ -967,6 +987,7 @@ Rsp::waitStop(DbgIF* dbgif) {
               return false;
             }
           }
+          return this->send_signal(TARGET_SIGNAL_INT);
         }
       }
     }
