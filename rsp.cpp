@@ -382,8 +382,8 @@ Rsp::reset(bool halt) {
       return this->send_str("E00");
       // FIXME: the following does not really work, neither does simply 
       // not re-enabling the fetch enable
-      DbgIF* dbgif = this->get_dbgif(m_thread_sel);
-      dbgif->write(DBG_IE_REG, 0xFFFF);
+      // DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+      // dbgif->write(DBG_IE_REG, 0xFFFF);
     }
 
     return this->send_str("OK");
