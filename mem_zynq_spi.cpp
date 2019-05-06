@@ -82,18 +82,20 @@ FpgaIF::mem_read(uint32_t addr, uint32_t *rdata) {
   wr_buf[2] = addr >> 16;
   wr_buf[3] = addr >> 8;
   wr_buf[4] = addr;
+  // wr_buf[5-8] == dummy
 
-  // check if write was sucessful
+  // Commit transfer to kernel and check for errors
   if (ioctl(g_spi_fd, SPI_IOC_MESSAGE(1), transfer) < 0) {
     perror("SPI_IOC_MESSAGE");
     return false;
   }
 
-  // shift everything by one bit
+  // shift everything read by one bit. FIXME: wtf? timing problem?
   for(unsigned int i = 0; i < transfer->len-1; i++) {
     rd_buf[i] = (rd_buf[i] << 1) | ((rd_buf[i+1] & 0x80) >> 7);
   }
 
+  // Convert actual memory data to right endian
   *rdata = htonl(*((int*)&rd_buf[9]));
 
   return true;

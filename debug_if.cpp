@@ -37,7 +37,7 @@ bool
 DbgIF::halt() {
   uint32_t data;
   if (!this->read(DBG_CTRL_REG, &data)) {
-    fprintf(stderr, "debug_is_stopped: Reading from CTRL reg failed\n");
+    fprintf(stderr, "debug_halt: Reading from CTRL reg failed\n");
     return false;
   }
 

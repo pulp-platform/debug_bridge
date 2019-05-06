@@ -382,8 +382,8 @@ Rsp::reset(bool halt) {
       return this->send_str("E00");
       // FIXME: the following does not really work, neither does simply 
       // not re-enabling the fetch enable
-      DbgIF* dbgif = this->get_dbgif(m_thread_sel);
-      dbgif->write(DBG_IE_REG, 0xFFFF);
+      // DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+      // dbgif->write(DBG_IE_REG, 0xFFFF);
     }
 
     return this->send_str("OK");
@@ -938,7 +938,9 @@ Rsp::waitStop(DbgIF* dbgif) {
       ret = recv(m_socket_client, &pkt, 1, 0);
       if (ret == 1 && pkt == 0x3) {
         if (dbgif) {
-          dbgif->halt();
+          if (!dbgif->halt()) {
+            printf("ERROR: failed sending halt\n");
+          }
 
           if (!dbgif->is_stopped()) {
             printf("ERROR: failed to stop core\n");
@@ -1058,13 +1060,6 @@ Rsp::resumeCores() {
   }
 }
 
-void
-Rsp::resumeAll(bool step) {  
-  for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-    resumeCore(*it, step);
-  }
-}
-
 bool
 Rsp::resume(bool step) {
   if (m_dbgifs.size() == 1) {
@@ -1124,7 +1119,7 @@ Rsp::mem_write_ascii(char* data, size_t len) {
   char* buffer;
   int buffer_len;
 
-  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zu:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1180,7 +1175,7 @@ Rsp::mem_write(char* data, size_t len) {
   size_t length;
   unsigned int i;
 
-  if (sscanf(data, "%" SCNx32 ",%zd:", &addr, &length) != 2) {
+  if (sscanf(data, "%" SCNx32 ",%zx:", &addr, &length) != 2) {
     fprintf(stderr, "Could not parse packet\n");
     return false;
   }
@@ -1276,7 +1271,7 @@ Rsp::encode_hex(const char *in, char *out, size_t out_len) {
   // This check guarantees that for every non-\0 character in the input 
   // there are two bytes available in the out buffer + one for trailing \0.
   if (2*in_len - 1 > out_len) {
-    fprintf(stderr, "%s: output buffer too small (need %zd, have %zd)\n", 
+    fprintf(stderr, "%s: output buffer too small (need %zu, have %zu)\n", 
       __func__, 2*in_len - 1, out_len);
     return false;
   }
