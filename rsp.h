@@ -29,6 +29,22 @@ class Rsp {
     bool loop();
 
   private:
+    enum target_signal {
+      TARGET_SIGNAL_NONE =  0,
+      TARGET_SIGNAL_INT  =  2,
+      TARGET_SIGNAL_ILL  =  4,
+      TARGET_SIGNAL_TRAP =  5,
+      TARGET_SIGNAL_FPE  =  8,
+      TARGET_SIGNAL_BUS  = 10,
+      TARGET_SIGNAL_SEGV = 11,
+      TARGET_SIGNAL_ALRM = 14,
+      TARGET_SIGNAL_STOP = 17,
+      TARGET_SIGNAL_USR2 = 31,
+      TARGET_SIGNAL_PWR  = 32,
+
+      TARGET_SIGNAL_LAST,
+    };
+
     bool decode(char* data, size_t len);
 
     bool multithread(char* data, size_t len);
@@ -39,6 +55,7 @@ class Rsp {
     bool query(char* data, size_t len);
     bool monitor(char* data, size_t len);
     bool v_packet(char* data, size_t len);
+    bool ctrlc(void); // break, reserved keyword, thus not used as function name
 
     bool regs_send();
     bool reg_read(char* data, size_t len);
@@ -46,9 +63,10 @@ class Rsp {
 
     bool get_packet(char* data, size_t* len);
 
-    bool signal();
 
     bool send(const char* data, size_t len);
+    bool send_stop_reason();
+    bool send_signal(enum target_signal signal);
     bool send_str(const char* data);
     // internal helper functions
     bool pc_read(unsigned int* pc);

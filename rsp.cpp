@@ -9,18 +9,12 @@ enum mp_type {
   WP_ACCESS   = 4
 };
 
-enum target_signal {
-  TARGET_SIGNAL_NONE =  0,
-  TARGET_SIGNAL_INT  =  2,
-  TARGET_SIGNAL_ILL  =  4,
-  TARGET_SIGNAL_TRAP =  5,
-  TARGET_SIGNAL_FPE  =  8,
-  TARGET_SIGNAL_BUS  = 10,
-  TARGET_SIGNAL_SEGV = 11,
-  TARGET_SIGNAL_ALRM = 14,
-  TARGET_SIGNAL_STOP = 17,
-  TARGET_SIGNAL_USR2 = 31,
-  TARGET_SIGNAL_PWR  = 32
+// Cf. riscv_defines.sv and riscv_controller.sv (and RISCV debug draft 0.4)
+enum debug_causes {
+  CAUSE_ILLEGAL_INSN = 0x02, // Illegal instruction
+  CAUSE_BREAKPOINT   = 0x03, // Break point
+  CAUSE_ECALL_UMODE  = 0x08, // ECALL from User Mode
+  CAUSE_ECALL_MMODE  = 0x0B, // ECALL from Machine Mode
 };
 
 #define PACKET_MAX_LEN 4096
@@ -45,6 +39,7 @@ bool
 Rsp::open() {
   struct sockaddr_in addr;
   int yes = 1;
+  bool ret = 0;
 
   addr.sin_family = AF_INET;
   addr.sin_port = htons(m_socket_port);
@@ -77,10 +72,13 @@ Rsp::open() {
 
   // now clear resources
   for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-    (*it)->halt();
+    if (!(*it)->halt()) {
+      printf("ERROR: failed sending halt\n");
+      ret = 1;
+    }
   }
 
-  return true;
+  return ret;
 }
 
 void
@@ -118,10 +116,23 @@ Rsp::loop() {
 }
 
 bool
+Rsp::ctrlc() {
+  // Cf. https://sourceware.org/gdb/onlinedocs/gdb/Interrupts.html
+  log->debug ("Received break\n");
+
+  DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+  if (!dbgif->halt() || !dbgif->is_stopped()) {
+    printf("ERROR: could not halt.\n");
+    return false;
+  }
+
+  return this->send_signal(TARGET_SIGNAL_INT);
+}
+
+bool
 Rsp::decode(char* data, size_t len) {
   if (data[0] == 0x03) {
-    log->debug ("Received break\n");
-    return this->signal();
+    return this->ctrlc();
   }
 
   switch (data[0]) {
@@ -151,9 +162,13 @@ Rsp::decode(char* data, size_t len) {
   case 'm':
     return this->mem_read(&data[1], len-1);
 
-  case '?':
-    return this->signal();
-
+  case '?': {
+    DbgIF* dbgif = this->get_dbgif(m_thread_sel);
+    if (dbgif->is_stopped())
+      return this->send_stop_reason();
+    else
+      return this->send_str("OK");
+  }
   case 'v':
     return this->v_packet(&data[0], len);
 
@@ -664,7 +679,8 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
     ret = recv(m_socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-      fprintf(stderr, "RSP: Error receiving\n");
+      fprintf(stderr, "RSP: Error receiving start bit: %s\n",
+              ret == 0 ? "Connection reset by peer" : strerror(errno));
       return false;
     }
 
@@ -693,7 +709,8 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
     ret = recv(m_socket_client, &c, 1, 0);
 
     if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-      fprintf(stderr, "RSP: Error receiving\n");
+      fprintf(stderr, "RSP: Error receiving payload: %s\n",
+              ret == 0 ? "Connection reset by peer" : strerror(errno));
       return false;
     }
 
@@ -724,13 +741,15 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
   // checksum, 2 bytes
   ret = recv(m_socket_client, &check_chars[0], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-    fprintf(stderr, "RSP: Error receiving\n");
+    fprintf(stderr, "RSP: Error receiving checksum[0]: %s\n",
+            ret == 0 ? "Connection reset by peer" : strerror(errno));
     return false;
   }
 
   ret = recv(m_socket_client, &check_chars[1], 1, 0);
   if((ret == -1 && errno != EWOULDBLOCK) || (ret == 0)) {
-    fprintf(stderr, "RSP: Error receiving\n");
+    fprintf(stderr, "RSP: Error receiving checksum[1]: %s\n",
+            ret == 0 ? "Connection reset by peer" : strerror(errno));
     return false;
   }
 
@@ -764,44 +783,52 @@ Rsp::get_packet(char* pkt, size_t* p_pkt_len) {
 }
 
 bool
-Rsp::signal() {
+Rsp::send_signal(enum target_signal signal) {
+  if (signal >= TARGET_SIGNAL_LAST)
+    return false;
+
+  char str[4];
+  int len = snprintf(str, 4, "S%02x", signal);
+  return (len == 3) && this->send(str, len);
+}
+
+bool
+Rsp::send_stop_reason() {
   uint32_t cause;
   uint32_t hit;
-  int signal;
-  char str[4];
-  int len;
-  DbgIF* dbgif;
+  enum target_signal signal;
+  DbgIF* dbgif = this->get_dbgif(m_thread_sel);
 
-  dbgif = this->get_dbgif(m_thread_sel);
+  // FIXME: why, and why here?
+  dbgif->write(DBG_IE_REG, 0xFFFF); // Make all debug interrupts cause traps
 
-  dbgif->write(DBG_IE_REG, 0xFFFF);
+  // Figure out why we are stopped
+  if (!dbgif->read(DBG_HIT_REG, &hit))
+    return false;
+  if (!dbgif->read(DBG_CAUSE_REG, &cause))
+    return false;
 
-  // figure out why we are stopped
-  if (dbgif->is_stopped()) {
-    if (!dbgif->read(DBG_HIT_REG, &hit))
-      return false;
-    if (!dbgif->read(DBG_CAUSE_REG, &cause))
-      return false;
+  bool irq = cause & (1 << 31);
+  cause &= 0x1F;
 
-    if (hit & 0x1)
-      signal = TARGET_SIGNAL_TRAP;
-    else if(cause & (1 << 31))
-      signal = TARGET_SIGNAL_INT;
-    else if(cause & (1 << 3))
-      signal = TARGET_SIGNAL_TRAP;
-    else if(cause & (1 << 2))
-      signal = TARGET_SIGNAL_ILL;
-    else if(cause & (1 << 5))
-      signal = TARGET_SIGNAL_BUS;
-    else
-      signal = TARGET_SIGNAL_STOP;
-  } else {
+  if (irq) // Interrupt
+    signal = TARGET_SIGNAL_INT;
+  else if (hit & 0x01) // Single step
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ILLEGAL_INSN)
+    signal = TARGET_SIGNAL_ILL;
+  else if (cause == CAUSE_BREAKPOINT)
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ECALL_UMODE)
+    signal = TARGET_SIGNAL_TRAP;
+  else if (cause == CAUSE_ECALL_MMODE)
+    signal = TARGET_SIGNAL_TRAP;
+  else {
+    printf("ERROR: could not determine the reason why we are stopped.\n");
     signal = TARGET_SIGNAL_NONE;
   }
 
-  len = snprintf(str, 4, "S%02x", signal);
-  
-  return this->send(str, len);
+  return this->send_signal(signal);
 }
 
 bool
@@ -886,16 +913,17 @@ Rsp::pc_read(unsigned int* pc) {
 
   dbgif->read(DBG_HIT_REG, &hit);
   dbgif->read(DBG_CAUSE_REG, &cause);
+  bool irq = cause & (1 << 31);
+  cause &= 0x1F;
 
+  // Correct PC for SW interrupts etc. FIXME: document
   if (hit & 0x1)
     *pc = npc;
-  else if(cause & (1 << 31)) // interrupt
+  else if (irq)
     *pc = npc;
-  else if(cause == 3)  // breakpoint
+  else if (cause == CAUSE_BREAKPOINT)
     *pc = ppc;
-  else if(cause == 2)
-    *pc = ppc;
-  else if(cause == 5)
+  else if (cause == CAUSE_ILLEGAL_INSN)
     *pc = ppc;
   else
     *pc = npc;
@@ -916,12 +944,12 @@ Rsp::waitStop(DbgIF* dbgif) {
     //First check if one core has stopped
     if (dbgif) {
       if (dbgif->is_stopped()) {
-        return this->signal();
+        return this->send_stop_reason();
       }
     } else {
       for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
         if ((*it)->is_stopped()) {
-          return this->signal();
+          return this->send_stop_reason();
         }
       }
     }
@@ -947,16 +975,19 @@ Rsp::waitStop(DbgIF* dbgif) {
             return false;
           }
 
-          return this->signal();
-        } else {          
+          return this->send_signal(TARGET_SIGNAL_INT);
+        } else {
           for (std::list<DbgIF*>::iterator it = m_dbgifs.begin(); it != m_dbgifs.end(); it++) {
-            (*it)->halt();
+            if (!(*it)->halt()) {
+              printf("ERROR: failed sending halt\n");
+            }
 
             if (!(*it)->is_stopped()) {
               printf("ERROR: failed to stop core\n");
               return false;
             }
           }
+          return this->send_signal(TARGET_SIGNAL_INT);
         }
       }
     }
@@ -979,27 +1010,10 @@ Rsp::resumeCore(DbgIF* dbgif, bool step) {
   dbgif->read(DBG_HIT_REG, &hit);
   dbgif->read(DBG_CAUSE_REG, &cause);
 
-  // if there is a breakpoint at this address, let's remove it and single-step over it
-  bool hasStepped = false;
 
-  if (m_bp->at_addr(ppc)) {
-    m_bp->disable(ppc);
-    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
-    dbgif->write(DBG_CTRL_REG, 0x1); // single-step
-    m_bp->enable(ppc);
-    hasStepped = true;
-  }
-
-  if (!step || !hasStepped) {
-    // clear hit register, has to be done before CTRL
-    dbgif->write(DBG_HIT_REG, 0);
-
-    if (step)
-      dbgif->write(DBG_CTRL_REG, 0x1);
-    else
-      dbgif->write(DBG_CTRL_REG, 0);
-  }
-
+  // Reset single step trace hit flag before any further steps via CTRL
+  dbgif->write(DBG_HIT_REG, 0);
+  dbgif->write(DBG_CTRL_REG, step); // Exit debug mode
 }
 
 void
@@ -1247,9 +1261,8 @@ Rsp::bp_remove(char* data, size_t len) {
 
   // check if we are currently on this bp that is removed
   dbgif->read(DBG_PPC_REG, &ppc);
-
   if (addr == ppc) {
-    dbgif->write(DBG_NPC_REG, ppc); // re-execute this instruction
+    dbgif->write(DBG_NPC_REG, ppc); // re-execute the original instruction next
   }
 
   return this->send_str("OK");

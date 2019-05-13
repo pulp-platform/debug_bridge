@@ -15,8 +15,6 @@
 #define DBG_NPC_REG   0x2000
 #define DBG_PPC_REG   0x2004
 
-#define DBG_CAUSE_BP  0x3
-
 class DbgIF {
   public:
     DbgIF(MemIF* mem, unsigned int base_addr, LogIF *log);
